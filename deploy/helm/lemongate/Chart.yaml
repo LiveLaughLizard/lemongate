@@ -1,0 +1,15 @@
+apiVersion: v2
+name: lemongate
+description: Self-hosted AI gateway and admin console for vLLM
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+home: https://github.com/LiveLaughLizard/lemongate
+sources:
+  - https://github.com/LiveLaughLizard/lemongate
+keywords:
+  - vllm
+  - llm
+  - ai-gateway
+  - openai
+  - mcp

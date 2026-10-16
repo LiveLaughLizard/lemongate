@@ -1,0 +1,31 @@
+LemonGate {{ .Chart.AppVersion }} is deployed as {{ include "lemongate.fullname" . }} in namespace {{ .Release.Namespace }}.
+{{- $url := include "lemongate.baseURL" . }}
+
+Console and gateway:
+{{- if $url }}
+  Console:  {{ $url }}/ui
+  Gateway:  {{ $url }}/v1   (OpenAI-compatible base URL)
+{{- else }}
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "lemongate.fullname" . }} 4000:{{ .Values.service.port }}
+  Console:  http://localhost:4000/ui
+  Gateway:  http://localhost:4000/v1   (OpenAI-compatible base URL)
+
+  Set baseURL (or enable ingress) to the public URL before exposing LemonGate: it is used
+  for links, SSO redirects and the Secure flag on session cookies.
+{{- end }}
+
+Sign in with the master key:
+  kubectl -n {{ .Release.Namespace }} get secret {{ include "lemongate.secretName" . }} -o jsonpath='{.data.master-key}' | base64 -d
+
+Then add models under Models (or in the `config` value), and create virtual keys under Keys
+for your applications instead of sharing the master key.
+{{- if gt (int .Values.replicaCount) 1 }}
+
+WARNING: replicaCount is {{ .Values.replicaCount }}. Rate limits, the response cache and
+deployment cooldowns are kept in memory and are enforced per replica.
+{{- end }}
+{{- if .Values.postgresql.enabled }}
+
+NOTE: the bundled Postgres is a single instance without backups. Use an external,
+backed-up database (database.url or database.existingSecret) for production.
+{{- end }}

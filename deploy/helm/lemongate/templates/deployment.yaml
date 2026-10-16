@@ -1,0 +1,227 @@
+{{- $secret := include "lemongate.secretName" . }}
+{{- $external := .Values.secrets.existingSecret }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "lemongate.fullname" . }}
+  labels:
+    {{- include "lemongate.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- with .Values.strategy }}
+  strategy:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "lemongate.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      labels:
+        {{- include "lemongate.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "lemongate.serviceAccountName" . }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automount }}
+      enableServiceLinks: false
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      containers:
+        - name: lemongate
+          image: {{ include "lemongate.image" . | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: [serve]
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 4000
+              protocol: TCP
+          env:
+            - name: LEMONGATE_LISTEN
+              value: ":4000"
+            {{- with include "lemongate.baseURL" . }}
+            - name: LEMONGATE_BASE_URL
+              value: {{ . | quote }}
+            {{- end }}
+            - name: LEMONGATE_MASTER_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: master-key
+            - name: LEMONGATE_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: secret-key
+            {{- if .Values.postgresql.enabled }}
+            - name: LEMONGATE_DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "lemongate.postgresql.secretName" . }}
+                  key: {{ include "lemongate.postgresql.secretKey" . }}
+            - name: DATABASE_URL
+              value: {{ printf "postgres://%s:$(LEMONGATE_DB_PASSWORD)@%s:5432/%s?sslmode=disable" .Values.postgresql.auth.username (include "lemongate.postgresql.fullname" .) .Values.postgresql.auth.database | quote }}
+            {{- else }}
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  {{- if .Values.database.existingSecret }}
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.existingSecretKey }}
+                  {{- else }}
+                  name: {{ include "lemongate.fullname" . }}-database
+                  key: database-url
+                  {{- end }}
+            {{- end }}
+            {{- if .Values.config }}
+            - name: LEMONGATE_CONFIG
+              value: /etc/lemongate/lemongate.yaml
+            {{- end }}
+            - name: LEMONGATE_SESSION_HOURS
+              value: {{ .Values.sessionHours | quote }}
+            {{- if .Values.debug }}
+            - name: LEMONGATE_DEBUG
+              value: "1"
+            {{- end }}
+            {{- if or $external .Values.metrics.token }}
+            - name: LEMONGATE_METRICS_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: metrics-token
+                  optional: {{ not .Values.metrics.token }}
+            {{- end }}
+            {{- with .Values.oidc }}
+            {{- if .enabled }}
+            - name: LEMONGATE_OIDC_ISSUER
+              value: {{ .issuer | quote }}
+            - name: LEMONGATE_OIDC_CLIENT_ID
+              value: {{ .clientId | quote }}
+            {{- if or $external .clientSecret }}
+            - name: LEMONGATE_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: oidc-client-secret
+                  optional: {{ not .clientSecret }}
+            {{- end }}
+            - name: LEMONGATE_OIDC_SCOPES
+              value: {{ join "," .scopes | quote }}
+            - name: LEMONGATE_OIDC_ROLE_CLAIM
+              value: {{ .roleClaim | quote }}
+            {{- with .adminValues }}
+            - name: LEMONGATE_OIDC_ADMIN_VALUES
+              value: {{ join "," . | quote }}
+            {{- end }}
+            - name: LEMONGATE_OIDC_DEFAULT_ROLE
+              value: {{ .defaultRole | quote }}
+            {{- with .defaultTeam }}
+            - name: LEMONGATE_OIDC_DEFAULT_TEAM
+              value: {{ . | quote }}
+            {{- end }}
+            - name: LEMONGATE_OIDC_BUTTON_LABEL
+              value: {{ .buttonLabel | quote }}
+            {{- if .trustEmail }}
+            - name: LEMONGATE_OIDC_TRUST_EMAIL
+              value: "1"
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.smtp }}
+            {{- if .enabled }}
+            - name: LEMONGATE_SMTP_HOST
+              value: {{ .host | quote }}
+            - name: LEMONGATE_SMTP_PORT
+              value: {{ .port | quote }}
+            {{- with .username }}
+            - name: LEMONGATE_SMTP_USERNAME
+              value: {{ . | quote }}
+            {{- end }}
+            {{- if or $external .password }}
+            - name: LEMONGATE_SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $secret }}
+                  key: smtp-password
+                  optional: {{ not .password }}
+            {{- end }}
+            - name: LEMONGATE_SMTP_FROM
+              value: {{ .from | quote }}
+            - name: LEMONGATE_SMTP_STARTTLS
+              value: {{ ternary "1" "0" .startTLS | quote }}
+            {{- end }}
+            {{- end }}
+            {{- with .Values.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          {{- with .Values.extraEnvFrom }}
+          envFrom:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.startupProbe }}
+          startupProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.livenessProbe }}
+          livenessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          {{- with .Values.readinessProbe }}
+          readinessProbe:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.config }}
+            - name: config
+              mountPath: /etc/lemongate
+              readOnly: true
+            {{- end }}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ .Values.tmpVolume.sizeLimit }}
+        {{- if .Values.config }}
+        - name: config
+          configMap:
+            name: {{ include "lemongate.fullname" . }}
+        {{- end }}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

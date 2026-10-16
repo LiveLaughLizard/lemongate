@@ -1,0 +1,263 @@
+# Default values for the LemonGate chart.
+
+image:
+  # Build and push the image yourself (see deploy/helm/lemongate/README.md).
+  repository: ghcr.io/livelaughlizard/lemongate
+  # Defaults to the chart's appVersion.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# Rate-limit counters, the response cache and deployment cooldowns are held in memory,
+# so each replica enforces limits independently. Keep 1 unless per-replica limits are
+# acceptable. Spend, budgets and everything else live in Postgres.
+replicaCount: 1
+
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0
+
+# Public URL of the gateway, used for links, cookies and SSO redirects. Session cookies
+# are marked Secure when this starts with https://. When empty and ingress is enabled,
+# it is derived from the first ingress host.
+baseURL: ""
+
+# Bootstrap secrets. Either set masterKey and secretKey here, or point existingSecret at a
+# Secret with the keys `master-key` and `secret-key` (and optionally `oidc-client-secret`,
+# `smtp-password`, `metrics-token`).
+#   masterKey: admin credential for the API and console. Generate with `openssl rand -hex 24`.
+#   secretKey: encrypts stored credentials. Generate with `openssl rand -hex 32`.
+#              KEEP IT STABLE: changing it makes stored credentials unreadable.
+secrets:
+  existingSecret: ""
+  masterKey: ""
+  secretKey: ""
+
+# Database. Use the bundled Postgres (postgresql.enabled) for evaluation, and an external,
+# backed-up Postgres 14+ for production.
+database:
+  # External connection string, e.g. postgres://user:pass@host:5432/lemongate?sslmode=require
+  url: ""
+  # Or read the connection string from an existing Secret.
+  existingSecret: ""
+  existingSecretKey: database-url
+
+# Optional YAML configuration (models, aliases, fallbacks, access groups, settings
+# overrides), rendered to /etc/lemongate/lemongate.yaml. Models declared here are
+# read-only in the console. ${VAR} and ${VAR:-default} are expanded from the container
+# environment, so upstream API keys can come from extraEnv secret references.
+config: {}
+#  models:
+#    - name: llama-3.1-8b
+#      api_base: http://vllm-llama.vllm.svc:8000/v1
+#      upstream_model: meta-llama/Llama-3.1-8B-Instruct
+#      api_key: ${VLLM_API_KEY:-}
+#      context_window: 131072
+#      input_cost_per_m: 0.10
+#      output_cost_per_m: 0.20
+#  aliases:
+#    default: llama-3.1-8b
+#  settings:
+#    routing:
+#      strategy: least_busy
+
+# Console session lifetime in hours.
+sessionHours: 12
+debug: false
+
+oidc:
+  enabled: false
+  issuer: ""
+  clientId: ""
+  # Stored in the chart Secret, or read from secrets.existingSecret (`oidc-client-secret`).
+  clientSecret: ""
+  scopes: [openid, email, profile]
+  roleClaim: groups
+  adminValues: []
+  defaultRole: member
+  defaultTeam: ""
+  buttonLabel: Continue with SSO
+  # Existing accounts are linked by email only when the provider asserts
+  # email_verified. Set true for directories that omit that claim but don't let
+  # users change their email.
+  trustEmail: false
+
+smtp:
+  enabled: false
+  host: ""
+  port: 587
+  username: ""
+  # Stored in the chart Secret, or read from secrets.existingSecret (`smtp-password`).
+  password: ""
+  from: ""
+  startTLS: true
+
+metrics:
+  # Static bearer token required to scrape /metrics. Stored in the chart Secret, or read
+  # from secrets.existingSecret (`metrics-token`). Empty = configure in Settings → Metrics.
+  token: ""
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    scrapeTimeout: 10s
+    labels: {}
+    # Send the metrics token as a bearer token when scraping.
+    useToken: false
+
+# Extra environment variables, e.g. upstream API keys referenced from config as ${VAR}.
+extraEnv: []
+#  - name: VLLM_API_KEY
+#    valueFrom:
+#      secretKeyRef:
+#        name: vllm
+#        key: api-key
+extraEnvFrom: []
+
+serviceAccount:
+  create: true
+  automount: false
+  annotations: {}
+  name: ""
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+
+service:
+  type: ClusterIP
+  port: 4000
+  annotations: {}
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  # Streaming responses need buffering off and long timeouts, e.g. for ingress-nginx:
+  #   nginx.ingress.kubernetes.io/proxy-buffering: "off"
+  #   nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+  #   nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+  #   nginx.ingress.kubernetes.io/proxy-body-size: "64m"
+  hosts:
+    - host: lemongate.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+  #  - secretName: lemongate-tls
+  #    hosts:
+  #      - lemongate.example.com
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Writable scratch space for multipart uploads (audio transcription) with a read-only root.
+tmpVolume:
+  sizeLimit: 256Mi
+
+startupProbe:
+  httpGet:
+    path: /health/live
+    port: http
+  periodSeconds: 2
+  failureThreshold: 60
+livenessProbe:
+  httpGet:
+    path: /health/live
+    port: http
+  periodSeconds: 10
+  timeoutSeconds: 3
+  failureThreshold: 3
+readinessProbe:
+  httpGet:
+    path: /health/ready
+    port: http
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 3
+
+# The server drains in-flight requests for up to 30s on SIGTERM.
+terminationGracePeriodSeconds: 45
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: false
+  # Sources allowed to reach the gateway (NetworkPolicyPeer list). Empty = all.
+  ingressFrom: []
+  #  - namespaceSelector:
+  #      matchLabels:
+  #        kubernetes.io/metadata.name: ingress-nginx
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+topologySpreadConstraints: []
+
+extraVolumes: []
+extraVolumeMounts: []
+
+# Bundled single-instance Postgres for evaluation and small installs. It is not
+# highly available and is not backed up by this chart.
+postgresql:
+  enabled: false
+  image:
+    repository: postgres
+    tag: 17-alpine
+    pullPolicy: IfNotPresent
+  auth:
+    username: lemongate
+    database: lemongate
+    # Use letters and digits only: the password is embedded in the connection URL.
+    password: ""
+    # Or read the password from an existing Secret.
+    existingSecret: ""
+    existingSecretKey: password
+  persistence:
+    size: 10Gi
+    storageClass: ""
+    accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+  # uid/gid 70 is the postgres user in the alpine image (use 999 for the Debian image).
+  podSecurityContext:
+    runAsNonRoot: true
+    runAsUser: 70
+    runAsGroup: 70
+    fsGroup: 70
+    seccompProfile:
+      type: RuntimeDefault
+  securityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop: [ALL]
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
