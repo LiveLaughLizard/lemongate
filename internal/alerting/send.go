@@ -21,6 +21,7 @@ import (
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -230,10 +231,10 @@ func (a *Alerter) sendWebhook(ctx context.Context, cfg ChannelConfig, m Message)
 	return a.post(ctx, cfg.URL, b, h)
 }
 
-func (a *Alerter) post(ctx context.Context, url string, body []byte, h http.Header) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+func (a *Alerter) post(ctx context.Context, target string, body []byte, h http.Header) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return redactURLError(err)
 	}
 	for k, v := range h {
 		req.Header[k] = v
@@ -242,7 +243,7 @@ func (a *Alerter) post(ctx context.Context, url string, body []byte, h http.Head
 	req.Header.Set("User-Agent", "LemonGate-Alerts/1")
 	resp, err := a.client.Do(req)
 	if err != nil {
-		return err
+		return redactURLError(err)
 	}
 	defer resp.Body.Close()
 	snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
@@ -254,6 +255,21 @@ func (a *Alerter) post(ctx context.Context, url string, body []byte, h http.Head
 		return fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
 	return nil
+}
+
+// redactURLError cuts the URL quoted by a *url.Error down to scheme and host.
+// Incoming-webhook URLs carry their secret in the path (Slack, Mattermost), and
+// delivery errors are stored in alert history, logged and shown in the console.
+func redactURLError(err error) error {
+	var ue *url.Error
+	if !errors.As(err, &ue) {
+		return err
+	}
+	origin := "…"
+	if u, perr := url.Parse(ue.URL); perr == nil && u.Host != "" {
+		origin = u.Scheme + "://" + u.Host + "/…"
+	}
+	return &url.Error{Op: ue.Op, URL: origin, Err: ue.Err}
 }
 
 // --- email ---

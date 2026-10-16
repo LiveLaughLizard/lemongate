@@ -53,6 +53,27 @@ func mapErr(err error) error {
 	return err
 }
 
+// deleteOwner runs retireKeys and then deleteSQL (both taking the owner id) in one
+// transaction. It returns ErrNotFound when the owner does not exist.
+func (s *Store) deleteOwner(ctx context.Context, retireKeys, deleteSQL, id string) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, retireKeys, id); err != nil {
+		return mapErr(err)
+	}
+	tag, err := tx.Exec(ctx, deleteSQL, id)
+	if err != nil {
+		return mapErr(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return tx.Commit(ctx)
+}
+
 func exec(ctx context.Context, s *Store, sql string, args ...any) error {
 	tag, err := s.Pool.Exec(ctx, sql, args...)
 	if err != nil {

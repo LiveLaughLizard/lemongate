@@ -80,16 +80,37 @@ func TestExtractIdentity(t *testing.T) {
 	if _, err := ExtractIdentity(map[string]any{"sub": "x", "email": "a@b.c", "email_verified": false}); err == nil {
 		t.Error("unverified email accepted")
 	}
+	if _, err := ExtractIdentity(map[string]any{"sub": "x", "email": "a@b.c", "email_verified": "false"}); err == nil {
+		t.Error("string \"false\" email_verified accepted")
+	}
+	for _, c := range []struct {
+		claims map[string]any
+		want   bool
+	}{
+		{map[string]any{"sub": "x", "email": "a@b.c", "email_verified": true}, true},
+		{map[string]any{"sub": "x", "email": "a@b.c", "email_verified": "true"}, true},
+		{map[string]any{"sub": "x", "email": "a@b.c"}, false},
+		{map[string]any{"sub": "x", "preferred_username": "a@b.c", "email_verified": true}, false},
+	} {
+		if id, err := ExtractIdentity(c.claims); err != nil || id.EmailVerified != c.want {
+			t.Errorf("ExtractIdentity(%v).EmailVerified = %v (err %v), want %v", c.claims, id.EmailVerified, err, c.want)
+		}
+	}
 }
 
 func TestSafeNext(t *testing.T) {
 	for in, want := range map[string]string{
-		"":                 "/ui",
-		"/ui/keys?x=1":     "/ui/keys?x=1",
-		"https://evil.com": "/ui",
-		"//evil.com/ui":    "/ui",
-		"/api/v1/keys":     "/ui",
-		"/ui\\@evil.com":   "/ui",
+		"":                  "/ui",
+		"/ui/keys?x=1":      "/ui/keys?x=1",
+		"https://evil.com":  "/ui",
+		"//evil.com/ui":     "/ui",
+		"/api/v1/keys":      "/ui",
+		"/ui\\@evil.com":    "/ui",
+		"/ui/../\\evil.com": "/ui",
+		"/ui/../api/v1":     "/ui",
+		"/ui/./keys/../x":   "/ui/x",
+		"/uix":              "/ui",
+		"/ui":               "/ui",
 	} {
 		if got := SafeNext(in); got != want {
 			t.Errorf("SafeNext(%q) = %q, want %q", in, got, want)

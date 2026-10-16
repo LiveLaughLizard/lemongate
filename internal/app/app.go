@@ -6,7 +6,9 @@ import (
 	"io/fs"
 	"log/slog"
 	"net/http"
+	"path"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -91,6 +93,9 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 	if err := db.Migrate(ctx, pool); err != nil {
 		return nil, err
 	}
+	if err := revokeStaleMasterSessions(ctx, pool, cfg.MasterKey); err != nil {
+		return nil, err
+	}
 	box, err := secret.New(cfg.SecretKey)
 	if err != nil {
 		return nil, err
@@ -161,10 +166,10 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 
 func (a *App) Handler() http.Handler {
 	r := chi.NewRouter()
-	r.Use(middleware.RealIP, middleware.Recoverer, requestLogger)
+	r.Use(middleware.RealIP, middleware.Recoverer, requestLogger, securityHeaders(strings.HasPrefix(a.Cfg.BaseURL, "https://")))
 
 	r.Get("/", func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "/ui", http.StatusFound) })
-	r.Handle("/static/*", http.StripPrefix("/", staticHandler(a.assets, a.Cfg.DevMode)))
+	r.Handle("/static/*", http.StripPrefix("/static", staticHandler(a.assets, a.Cfg.DevMode)))
 	r.Get("/favicon.ico", func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/static/img/favicon.svg", http.StatusMovedPermanently)
 	})
@@ -256,9 +261,19 @@ func (a *App) Close() {
 	a.Pool.Close()
 }
 
+// staticHandler serves files under static/ only (never templates), without directory listings.
 func staticHandler(assets fs.FS, dev bool) http.Handler {
-	fsrv := http.FileServer(http.FS(assets))
+	sub, err := fs.Sub(assets, "static")
+	if err != nil {
+		panic(err)
+	}
+	fsrv := http.FileServer(http.FS(sub))
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(path.Clean("/"+r.URL.Path), "/")
+		if st, err := fs.Stat(sub, name); err != nil || st.IsDir() {
+			http.NotFound(w, r)
+			return
+		}
 		if dev {
 			w.Header().Set("Cache-Control", "no-cache")
 		} else {
@@ -266,6 +281,24 @@ func staticHandler(assets fs.FS, dev bool) http.Handler {
 		}
 		fsrv.ServeHTTP(w, r)
 	})
+}
+
+// securityHeaders sets browser hardening headers on every response. Pass-through
+// routes add a sandbox CSP of their own (see package passthrough).
+func securityHeaders(https bool) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			h := w.Header()
+			h.Set("X-Content-Type-Options", "nosniff")
+			h.Set("X-Frame-Options", "DENY")
+			h.Set("Referrer-Policy", "same-origin")
+			h.Set("Content-Security-Policy", "frame-ancestors 'none'; object-src 'none'; base-uri 'self'; form-action 'self'")
+			if https {
+				h.Set("Strict-Transport-Security", "max-age=31536000")
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func requestLogger(next http.Handler) http.Handler {

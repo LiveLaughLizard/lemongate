@@ -48,10 +48,11 @@ func (b *Box) OpenString(sealed []byte) (string, error) {
 	return string(p), err
 }
 
-// Hint renders a short non-reversible preview of a secret, e.g. "sk-…a1b2".
+// Hint renders a short non-reversible preview of a secret, e.g. "…a1b2": the
+// last four characters, and only for secrets long enough that they reveal little.
 func Hint(s string) string {
-	if len(s) <= 8 {
+	if len(s) < 16 {
 		return "••••"
 	}
-	return s[:3] + "…" + s[len(s)-4:]
+	return "…" + s[len(s)-4:]
 }

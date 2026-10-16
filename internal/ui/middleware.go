@@ -3,6 +3,8 @@ package ui
 import (
 	"net/http"
 	"net/url"
+	"path"
+	"strings"
 
 	"lemongate/internal/auth"
 )
@@ -84,4 +86,26 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Error(w, "forbidden", http.StatusForbidden)
+}
+
+// SafeNext returns next if it is a same-origin console path, else "/ui". The path is
+// checked after cleaning (http.Redirect cleans it too), so "/ui/../x" cannot escape
+// /ui, and backslashes and control characters (browsers read "/\host" as "//host")
+// are rejected outright.
+func SafeNext(next string) string {
+	if next == "" || strings.ContainsAny(next, "\\\r\n\t") {
+		return "/ui"
+	}
+	u, err := url.Parse(next)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.User != nil || !strings.HasPrefix(u.Path, "/") {
+		return "/ui"
+	}
+	p := path.Clean(u.Path)
+	if p != "/ui" && !strings.HasPrefix(p, "/ui/") {
+		return "/ui"
+	}
+	if u.RawQuery != "" {
+		p += "?" + u.RawQuery
+	}
+	return p
 }

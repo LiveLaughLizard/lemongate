@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"slices"
 	"strconv"
@@ -19,6 +20,7 @@ import (
 	"lemongate/internal/limits"
 	"lemongate/internal/metrics"
 	"lemongate/internal/routing"
+	"lemongate/internal/settings"
 	"lemongate/internal/spend"
 	"lemongate/internal/store"
 )
@@ -33,6 +35,12 @@ type endpoint struct {
 
 // Fields understood by the gateway and stripped before forwarding upstream.
 var gatewayFields = []string{"guardrails", "metadata", "tags", "cache"}
+
+// Metadata keys the gateway sets itself; client values are dropped (some are read
+// back, e.g. as metric labels).
+var gatewayMetadata = []string{"fallback_from", "context_fallback_from", "guardrail", "cache", "client_disconnected", "usage_estimated"}
+
+func maxBody(st settings.Settings) int64 { return int64(max(st.General.MaxRequestBytes, 1<<20)) }
 
 // call carries per-request state through the pipeline.
 type call struct {
@@ -55,9 +63,9 @@ func (g *Gateway) handle(ep endpoint) http.HandlerFunc {
 		reqID := newRequestID()
 		w.Header().Set("x-lemongate-request-id", reqID)
 
-		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, int64(max(st.General.MaxRequestBytes, 1<<20))))
+		raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxBody(st)))
 		if err != nil {
-			WriteError(w, errBadRequest("request body too large or unreadable"))
+			WriteError(w, errBody(err))
 			return
 		}
 		dec := json.NewDecoder(bytes.NewReader(raw))
@@ -65,6 +73,16 @@ func (g *Gateway) handle(ep endpoint) http.HandlerFunc {
 		if err := dec.Decode(&c.payload); err != nil || c.payload == nil {
 			WriteError(w, errBadRequest("request body must be a JSON object"))
 			return
+		}
+		// Upstream coerces strings and numbers to true and would stream without the
+		// usage trailer billing relies on.
+		if v, ok := c.payload["stream"]; ok {
+			if v == nil {
+				delete(c.payload, "stream")
+			} else if _, isBool := v.(bool); !isBool {
+				WriteError(w, &APIError{Status: 400, Message: "'stream' must be a boolean", Type: "invalid_request_error", Param: "stream"})
+				return
+			}
 		}
 		c.requested, _ = c.payload["model"].(string)
 		if c.requested == "" {
@@ -85,7 +103,7 @@ func (g *Gateway) handle(ep endpoint) http.HandlerFunc {
 		tags := requestTags(r, c.payload, p)
 		endUser := ""
 		if u, ok := c.payload["user"].(string); ok && st.General.TrackEndUsers {
-			endUser = u
+			endUser = spend.CleanEndUser(u)
 		}
 		c.info = hooks.CallInfo{RequestID: reqID, Route: ep.route, Model: c.group, Principal: p, Stream: stream,
 			RequestedGuardrails: stringList(c.payload["guardrails"])}
@@ -96,7 +114,10 @@ func (g *Gateway) handle(ep endpoint) http.HandlerFunc {
 			c.rec.KeyAlias = p.Key.Alias
 		}
 		if md, ok := c.payload["metadata"].(map[string]any); ok {
-			c.rec.Metadata = md
+			c.rec.Metadata = spend.CleanMetadata(md)
+			for _, k := range gatewayMetadata {
+				delete(c.rec.Metadata, k)
+			}
 		}
 		for _, f := range gatewayFields {
 			delete(c.payload, f)
@@ -175,7 +196,7 @@ func (g *Gateway) handle(ep endpoint) http.HandlerFunc {
 		}
 		defer resp.Body.Close()
 		c.rec.DeploymentID = depID(dep)
-		c.rec.APIBase = dep.APIBase
+		c.rec.APIBase = routing.RedactBase(dep.APIBase)
 		w.Header().Set("x-lemongate-model", c.group)
 		w.Header().Set("x-lemongate-deployment", dep.ID)
 		if cacheable {
@@ -247,21 +268,25 @@ func (g *Gateway) dispatch(ctx context.Context, c *call) (*http.Response, *routi
 			if attempt > 0 {
 				metrics.Retries.WithLabelValues(group).Inc()
 			}
-			lv := []string{dep.Name, dep.APIBase, dep.ID}
+			lv := []string{dep.Name, routing.RedactBase(dep.APIBase), dep.ID}
 			sent := time.Now()
 			resp, err := g.send(ctx, dep, c, group)
 			if err != nil {
-				dep.End(false, 0, 0, rs)
+				// A client that hangs up must not count against (and cool down) the deployment.
+				dep.End(ctx.Err() != nil, time.Since(sent), 0, rs)
 				if ctx.Err() == nil {
 					metrics.UpstreamRequests.WithLabelValues(append(lv, "error")...).Inc()
 					metrics.DeploymentFailures.WithLabelValues(lv...).Inc()
 				}
 				exclude[dep.ID] = true
+				// The transport error names the upstream URL: keep it out of the client message.
 				lastErr = &APIError{Status: http.StatusBadGateway, Type: "upstream_error", Code: "upstream_unreachable",
-					Message: fmt.Sprintf("upstream %s for model '%s' failed: %v", dep.APIBase, group, err)}
+					Message: fmt.Sprintf("upstream request for model '%s' failed", group),
+					detail:  fmt.Sprintf("upstream %s for model '%s' failed: %v", routing.RedactBase(dep.APIBase), group, err)}
 				if ctx.Err() != nil {
 					return nil, nil, lastErr
 				}
+				slog.Warn("upstream request failed", "request_id", c.info.RequestID, "model", group, "api_base", routing.RedactBase(dep.APIBase), "err", err)
 				continue
 			}
 			metrics.UpstreamRequests.WithLabelValues(append(lv, metrics.CodeClass(resp.StatusCode))...).Inc()
@@ -401,7 +426,12 @@ type usage struct{ prompt, completion int }
 func parseUsage(m map[string]any) (usage, bool) {
 	u, ok := m["usage"].(map[string]any)
 	if !ok {
-		return usage{}, false
+		// Responses API stream events (response.completed, .incomplete, .failed)
+		// carry it on the embedded response object.
+		r, _ := m["response"].(map[string]any)
+		if u, ok = r["usage"].(map[string]any); !ok {
+			return usage{}, false
+		}
 	}
 	n := func(k string) int {
 		switch v := u[k].(type) {
@@ -428,8 +458,9 @@ func (g *Gateway) relayJSON(ctx context.Context, w http.ResponseWriter, resp *ht
 	body, err := io.ReadAll(resp.Body)
 	latency := time.Since(c.start)
 	if err != nil {
-		dep.End(false, latency, 0, rs)
-		g.fail(w, c, &APIError{Status: 502, Type: "upstream_error", Message: "error reading upstream response: " + err.Error()}, "error")
+		dep.End(ctx.Err() != nil, latency, 0, rs)
+		g.fail(w, c, &APIError{Status: 502, Type: "upstream_error", Message: "error reading upstream response",
+			detail: "error reading upstream response: " + err.Error()}, "error")
 		return 0
 	}
 	c.rec.LatencyMs = int(latency.Milliseconds())
@@ -438,12 +469,17 @@ func (g *Gateway) relayJSON(ctx context.Context, w http.ResponseWriter, resp *ht
 	dec := json.NewDecoder(bytes.NewReader(body))
 	dec.UseNumber()
 	if dec.Decode(&m) != nil || m == nil {
-		// Not JSON: relay verbatim.
 		dep.End(true, latency, 0, rs)
-		c.rec.Status = "success"
 		if !c.ep.free {
-			g.record(c.rec)
+			// Billable routes answer JSON with usage. Anything else (e.g. an SSE
+			// stream the gateway did not ask for) cannot be billed, so it is not relayed.
+			slog.Warn("upstream returned a non-JSON response on a billable route", "request_id", c.info.RequestID,
+				"route", c.ep.route, "model", c.group, "status", resp.StatusCode, "content_type", resp.Header.Get("Content-Type"))
+			g.fail(w, c, &APIError{Status: 502, Type: "upstream_error", Message: "upstream returned an unexpected non-JSON response",
+				detail: fmt.Sprintf("upstream returned a non-JSON response (%d, %q)", resp.StatusCode, resp.Header.Get("Content-Type"))}, "error")
+			return 0
 		}
+		// Utility endpoints (not logged): relay verbatim.
 		copyHeaders(w, resp)
 		w.WriteHeader(resp.StatusCode)
 		_, _ = w.Write(body)
@@ -510,6 +546,7 @@ func (g *Gateway) relayStream(ctx context.Context, w http.ResponseWriter, resp *
 	var u usage
 	var text strings.Builder
 	var ttft *int
+	var outChunks, outBytes int // relayed output, for estimating usage that never arrived
 	reader := bufio.NewReaderSize(resp.Body, 64<<10)
 	var readErr error
 	clientGone := false
@@ -526,11 +563,15 @@ func (g *Gateway) relayStream(ctx context.Context, w http.ResponseWriter, resp *
 							u = cu
 						}
 						choices, _ := chunk["choices"].([]any)
+						if typ, _ := chunk["type"].(string); len(choices) > 0 || strings.HasSuffix(typ, ".delta") {
+							outChunks++
+						}
 						if piece := chunkText(chunk, choices); piece != "" {
 							if ttft == nil {
 								v := int(time.Since(c.start).Milliseconds())
 								ttft = &v
 							}
+							outBytes += len(piece)
 							if text.Len() < 1<<20 {
 								text.WriteString(piece)
 							}
@@ -568,6 +609,16 @@ func (g *Gateway) relayStream(ctx context.Context, w http.ResponseWriter, resp *
 	if flusher != nil {
 		flusher.Flush()
 	}
+	if readErr != nil && ctx.Err() != nil {
+		// The client went away and cancelled the upstream read: not a deployment failure.
+		readErr, clientGone = nil, true
+	}
+	if u.prompt+u.completion == 0 && outChunks > 0 {
+		// No usage arrived (the client left before the trailer, or the stream broke):
+		// bill an estimate rather than nothing.
+		u = estimateUsage(c.payload, outBytes, outChunks)
+		c.rec.Metadata["usage_estimated"] = true
+	}
 	latency := time.Since(c.start)
 	dep.End(readErr == nil, latency, u.prompt+u.completion, rs)
 	c.rec.LatencyMs = int(latency.Milliseconds())
@@ -590,6 +641,42 @@ func (g *Gateway) relayStream(ctx context.Context, w http.ResponseWriter, resp *
 	}
 	g.record(c.rec)
 	return u.prompt + u.completion
+}
+
+// estimateUsage approximates token counts at ~4 bytes per token: the prompt from
+// the request's text, the completion from what was relayed (at least a token per
+// streamed delta).
+func estimateUsage(payload map[string]any, outBytes, outChunks int) usage {
+	n := 0
+	for _, k := range []string{"messages", "prompt", "input", "instructions", "tools"} {
+		n += textBytes(payload[k])
+	}
+	return usage{prompt: (n + 3) / 4, completion: max(outChunks, (outBytes+3)/4)}
+}
+
+// textBytes sums the strings in a decoded JSON value, skipping inline media
+// (data URLs, base64 fields) whose token cost is not proportional to its size.
+func textBytes(v any) int {
+	n := 0
+	switch t := v.(type) {
+	case string:
+		if !strings.HasPrefix(t, "data:") {
+			n = len(t)
+		}
+	case json.Number:
+		n = 4 // a token id
+	case []any:
+		for _, x := range t {
+			n += textBytes(x)
+		}
+	case map[string]any:
+		for k, x := range t {
+			if k != "data" && k != "file_data" {
+				n += textBytes(x)
+			}
+		}
+	}
+	return n
 }
 
 func chunkText(chunk map[string]any, choices []any) string {
@@ -645,6 +732,9 @@ func (g *Gateway) fail(w http.ResponseWriter, c *call, e *APIError, status strin
 	c.rec.Status = status
 	c.rec.HTTPStatus = e.Status
 	c.rec.Error = e.Message
+	if e.detail != "" {
+		c.rec.Error = e.detail
+	}
 	c.rec.LatencyMs = int(time.Since(c.start).Milliseconds())
 	if !c.ep.free {
 		g.record(c.rec)
@@ -679,6 +769,9 @@ func (g *Gateway) capturePayload(v any) []byte {
 
 func requestTags(r *http.Request, payload map[string]any, p *auth.Principal) []string {
 	var tags []string
+	if p.Key != nil {
+		tags = append(tags, p.Key.Tags...) // first, so the cap on client tags never drops them
+	}
 	if h := r.Header.Get("x-lemongate-tags"); h != "" {
 		tags = append(tags, strings.Split(h, ",")...)
 	}
@@ -686,10 +779,7 @@ func requestTags(r *http.Request, payload map[string]any, p *auth.Principal) []s
 	if md, ok := payload["metadata"].(map[string]any); ok {
 		tags = append(tags, stringList(md["tags"])...)
 	}
-	if p.Key != nil {
-		tags = append(tags, p.Key.Tags...)
-	}
-	out := store.CleanList(tags)
+	out := spend.CleanTags(store.CleanList(tags))
 	slices.Sort(out)
 	return out
 }

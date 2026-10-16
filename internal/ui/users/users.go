@@ -595,6 +595,10 @@ func (h *H) changePassword(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	cur, next, confirm := r.FormValue("current"), r.FormValue("password"), r.FormValue("confirm")
 	switch {
+	case u.PasswordHash == "" && u.SSOSubject != nil:
+		// A local password would keep working after the identity provider disables the account.
+		ui.Fail(w, 422, "Your account signs in with single sign-on and can't have a password.")
+		return
 	case u.PasswordHash != "" && !auth.CheckPassword(u.PasswordHash, cur):
 		ui.Fail(w, 422, "Your current password is incorrect.")
 		return
@@ -613,6 +617,9 @@ func (h *H) changePassword(w http.ResponseWriter, r *http.Request) {
 	if err := h.d.Store.SetUserPassword(r.Context(), u.ID, hash); err != nil {
 		ui.Fail(w, 500, err.Error())
 		return
+	}
+	if c, err := r.Cookie(ui.SessionCookie); err == nil {
+		_ = h.d.Store.DeleteOtherUserSessions(r.Context(), u.ID, auth.HashToken(c.Value))
 	}
 	h.d.Audit(r, "change_password", "user", u.ID, "Changed own password", nil, nil)
 	ui.Toast(w, "success", "Password updated")

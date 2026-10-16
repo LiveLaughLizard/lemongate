@@ -197,6 +197,22 @@ func TestWebhookErrorStatus(t *testing.T) {
 	}
 }
 
+func TestDeliveryErrorHidesWebhookURL(t *testing.T) {
+	box, _ := secret.New("k")
+	a := New(nil, box, settings.NewStore(nil), configSMTP())
+	m := Message{At: time.Now(), Event: hooks.Event{Title: "x"}}
+	for _, c := range []struct{ url, want string }{
+		{"http://127.0.0.1:1/services/T000/B000/s3cretT0ken?token=q", `Post "http://127.0.0.1:1/…"`},
+		{"http://bad host/services/s3cretT0ken", `parse "…"`},
+	} {
+		err := a.sendSlack(context.Background(), ChannelConfig{URL: c.url}, m)
+		if err == nil || strings.Contains(err.Error(), "s3cretT0ken") || strings.Contains(err.Error(), "token=") ||
+			!strings.HasPrefix(err.Error(), c.want) {
+			t.Fatalf("%s: error = %v", c.url, err)
+		}
+	}
+}
+
 func TestEmailFormatting(t *testing.T) {
 	m := Message{At: time.Unix(1700000000, 0), Event: hooks.Event{Kind: "budget_threshold", Severity: "warning",
 		Title: "Key <prod> reached 80%", Body: "spent a lot", Fields: map[string]string{"spend": "$8.00"}}}

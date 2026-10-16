@@ -104,8 +104,16 @@ func (h *H) updateUser(w http.ResponseWriter, r *http.Request) {
 			badRequest(w, "password must be at least 8 characters")
 			return
 		}
-		hash, _ := auth.HashPassword(*in.Password)
-		_ = h.d.Store.SetUserPassword(r.Context(), u.ID, hash)
+		hash, err := auth.HashPassword(*in.Password)
+		if err != nil {
+			badRequest(w, "password can't be used (at most 72 bytes)")
+			return
+		}
+		if err := h.d.Store.SetUserPassword(r.Context(), u.ID, hash); err != nil {
+			storeErr(w, err, "user")
+			return
+		}
+		_ = h.d.Store.DeleteUserSessions(r.Context(), u.ID)
 	}
 	if u.Blocked && !before.Blocked {
 		_ = h.d.Store.DeleteUserSessions(r.Context(), u.ID)
@@ -304,6 +312,10 @@ func (h *H) addMember(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		storeErr(w, err, "user")
+		return
+	}
+	if u.ID == p.UserID() && !p.IsAdmin() {
+		forbidden(w, "you can't change your own team membership")
 		return
 	}
 	if err := h.d.Store.UpsertTeamMember(r.Context(), t.ID, u.ID, in.Role, in.MaxBudget); err != nil {

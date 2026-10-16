@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"errors"
 	"slices"
 
 	"lemongate/internal/store"
@@ -140,7 +141,42 @@ func (p *Principal) CanManageKey(k store.Key) bool {
 	if k.UserID != nil && *k.UserID == p.UserID() {
 		return true
 	}
-	return k.TeamID != nil && p.IsTeamAdmin(*k.TeamID)
+	// Team admins manage their team's inference keys only: management and admin keys
+	// bound to a team would otherwise let them regenerate an admin credential.
+	return k.TeamID != nil && k.Scope == "inference" && p.IsTeamAdmin(*k.TeamID)
+}
+
+// CheckKeyEdit enforces what a non-admin may change when creating (before == nil) or
+// updating a key; the console and the API both call it after binding input onto k.
+func (p *Principal) CheckKeyEdit(before, k *store.Key) error {
+	if p.IsAdmin() {
+		return nil
+	}
+	var old store.Key
+	if before != nil {
+		old = *before
+	}
+	for _, s := range k.MCPServers {
+		if !slices.Contains(old.MCPServers, s) {
+			return errors.New("only admins can grant MCP servers on a key")
+		}
+	}
+	if old.TeamID != nil && store.Deref(k.TeamID) != *old.TeamID && !p.IsTeamAdmin(*old.TeamID) {
+		return errors.New("only an admin of the key's team can move it out of the team")
+	}
+	if k.TeamID != nil && store.Deref(old.TeamID) != *k.TeamID && !p.IsTeamAdmin(*k.TeamID) {
+		return errors.New("you can only assign keys to teams you administer")
+	}
+	if old.Blocked && !k.Blocked && !p.CanUnblockKey(old) {
+		return errors.New("only an admin can unblock this key")
+	}
+	return nil
+}
+
+// CanUnblockKey reports whether the principal may lift a block on k. Owners can block
+// their own keys but not undo a block placed by an admin or team admin.
+func (p *Principal) CanUnblockKey(k store.Key) bool {
+	return p.IsAdmin() || (!p.ReadOnly() && k.TeamID != nil && k.Scope == "inference" && p.IsTeamAdmin(*k.TeamID))
 }
 
 func (p *Principal) CanViewKey(k store.Key) bool {
@@ -166,13 +202,19 @@ func (p *Principal) AllowedModels(r ModelResolver) []string {
 		return nil
 	}
 	var allowed []string // nil = unrestricted
+	// restrict intersects with a configured list. An empty list means "no restriction",
+	// but a non-empty one that expands to nothing (e.g. a deleted access group) allows
+	// nothing rather than everything.
 	restrict := func(list []string) {
+		if len(list) == 0 {
+			return
+		}
 		list = expand(list, r)
-		if len(list) == 0 || slices.Contains(list, "*") {
+		if slices.Contains(list, "*") {
 			return
 		}
 		if allowed == nil {
-			allowed = slices.Clone(list)
+			allowed = append([]string{}, list...) // non-nil even when list is empty
 			return
 		}
 		allowed = slices.DeleteFunc(allowed, func(m string) bool { return !slices.Contains(list, m) })
@@ -189,7 +231,11 @@ func (p *Principal) AllowedModels(r ModelResolver) []string {
 		restrict(p.User.Models)
 	}
 	if p.Key != nil {
-		restrict(append(slices.Clone(p.Key.Models), r.ExpandAccessGroups(p.Key.AccessGroups)...))
+		keyList := slices.Clone(p.Key.Models)
+		for _, g := range p.Key.AccessGroups {
+			keyList = append(keyList, "group:"+g)
+		}
+		restrict(keyList)
 	}
 	if allowed != nil {
 		slices.Sort(allowed)

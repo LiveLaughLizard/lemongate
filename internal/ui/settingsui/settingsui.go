@@ -113,7 +113,7 @@ func (h *H) overrides() map[string]map[string]bool {
 func (h *H) env(ctx context.Context) Env {
 	c := h.d.Cfg
 	e := Env{BaseURL: c.BaseURL, Listen: c.Listen, ConfigPath: c.ConfigPath, Version: h.d.R.Version, GoVersion: runtime.Version(),
-		DevMode: c.DevMode, SSO: h.d.Features.SSO, SMTP: h.d.Features.SMTP, SecretKeySet: c.SecretKey != "",
+		DevMode: c.DevMode, SSO: h.d.Features.SSO, SMTP: h.d.Features.SMTP, SecretKeySet: !c.SecretKeyDerived,
 		FileModels: len(c.File.Models), SessionHours: c.SessionHours}
 	if e.SSO {
 		e.SSOIssuer = hostOnly(c.OIDC.Issuer)

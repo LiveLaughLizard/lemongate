@@ -13,8 +13,11 @@ func (s *Store) ListUsersInOrg(ctx context.Context, orgID string) ([]User, error
 }
 
 // PurgeTeam permanently deletes a (soft-deleted) team. Keys keep their rows with team_id cleared.
+// PurgeTeam hard-deletes a team and soft-deletes its keys, which would otherwise
+// lose the team's restrictions when team_id is nulled.
 func (s *Store) PurgeTeam(ctx context.Context, id string) error {
-	return exec(ctx, s, `DELETE FROM teams WHERE id=$1`, id)
+	return s.deleteOwner(ctx, `UPDATE api_keys SET deleted_at=now(), updated_at=now() WHERE team_id=$1 AND deleted_at IS NULL`,
+		`DELETE FROM teams WHERE id=$1`, id)
 }
 
 // SetUserBlocked toggles a user's blocked flag.

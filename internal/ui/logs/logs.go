@@ -15,6 +15,7 @@ import (
 
 	"lemongate/internal/analytics"
 	"lemongate/internal/auth"
+	"lemongate/internal/routing"
 	"lemongate/internal/store"
 	"lemongate/internal/ui"
 )
@@ -204,6 +205,7 @@ type showData struct {
 	CanSettings   bool
 	Deployment    string
 	CanViewKey    bool
+	PayloadHidden bool // bodies were stored but the viewer may not read them
 }
 
 func (h *H) show(w http.ResponseWriter, r *http.Request) {
@@ -223,18 +225,34 @@ func (h *H) show(w http.ResponseWriter, r *http.Request) {
 	sd := showData{L: l, StorePayloads: h.d.Settings.Current().Logging.StorePayloads, CanSettings: p.CanViewAll()}
 	if l.DeploymentID != nil {
 		if dep := h.d.Registry.Deployment(*l.DeploymentID); dep != nil && p.CanViewAll() {
-			sd.Deployment = dep.Name + " · " + dep.APIBase
+			sd.Deployment = dep.Name + " · " + routing.RedactBase(dep.APIBase)
 		}
 	}
+	var ownKeys []string
 	if l.KeyID != nil {
-		sd.CanViewKey = p.CanViewAll() || slices.Contains(analytics.UserKeyIDs(ctx, h.d.Store.Pool, p.UserID()), *l.KeyID) ||
-			(l.TeamID != nil && p.InTeam(*l.TeamID))
+		ownKeys = analytics.UserKeyIDs(ctx, h.d.Store.Pool, p.UserID())
+		sd.CanViewKey = p.CanViewAll() || slices.Contains(ownKeys, *l.KeyID) || (l.TeamID != nil && p.InTeam(*l.TeamID))
+	}
+	// Stored prompts and responses are for admins and the request's owner only (as
+	// in the API), not for teammates or read-only admins who can see the row.
+	if !p.IsAdmin() && !ownsLog(l, p.UserID(), ownKeys) {
+		sd.PayloadHidden = l.HasPayload()
+		sd.L.RequestBody, sd.L.ResponseBody = nil, nil
 	}
 	if !ui.IsHTMX(r) {
 		h.d.Render(w, r, "logs/show", "logs", "Request "+truncate(l.RequestID, 18), sd, ui.Crumb{Label: "Request logs", Href: "/ui/logs"})
 		return
 	}
 	h.d.Partial(w, r, 200, area, "log-detail", sd)
+}
+
+// ownsLog reports whether the viewer made the request: through their console
+// session or with one of their own keys.
+func ownsLog(l analytics.LogEntry, userID string, ownKeys []string) bool {
+	if userID == "" {
+		return false
+	}
+	return (l.UserID != nil && *l.UserID == userID) || (l.KeyID != nil && slices.Contains(ownKeys, *l.KeyID))
 }
 
 func truncate(s string, n int) string {

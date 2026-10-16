@@ -48,7 +48,7 @@
               {{if not $self}}
                 {{if .Blocked}}<li><button hx-post="/ui/users/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
                 {{else}}<li><button hx-post="/ui/users/{{.ID}}/block" hx-confirm="Block {{.Email}}? They are signed out and their keys stop working.">{{icon "ban"}} Block</button></li>{{end}}
-                <li><button class="text-error" hx-post="/ui/users/{{.ID}}/delete" hx-confirm="Delete {{.Email}}? Their keys remain but lose their owner. This cannot be undone.">{{icon "trash-2"}} Delete</button></li>
+                <li><button class="text-error" hx-post="/ui/users/{{.ID}}/delete" hx-confirm="Delete {{.Email}}? Their keys are deleted too. This cannot be undone.">{{icon "trash-2"}} Delete</button></li>
               {{end}}
               {{end}}
             </ul>

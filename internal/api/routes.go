@@ -68,7 +68,7 @@ func (h *H) routes() []route {
 			Access: accessViewer, Body: "UserInput", Resp: "User", Status: 201, Example: `{"email": "ada@example.com", "name": "Ada", "role": "member", "max_budget": 50}`, handler: h.createUser},
 		{Method: "GET", Path: "/users/{id}", Tag: "Users", Summary: "Get user", Access: accessViewer, Resp: "User", handler: h.getUser},
 		{Method: "PATCH", Path: "/users/{id}", Tag: "Users", Summary: "Update user", Access: accessViewer, Body: "UserInput", Resp: "User", Example: `{"role": "admin_viewer"}`, handler: h.updateUser},
-		{Method: "DELETE", Path: "/users/{id}", Tag: "Users", Summary: "Delete user", Access: accessViewer, Resp: "Deleted", handler: h.deleteUser},
+		{Method: "DELETE", Path: "/users/{id}", Tag: "Users", Summary: "Delete user", Desc: "Deletes the user and their keys.", Access: accessViewer, Resp: "Deleted", handler: h.deleteUser},
 
 		// teams
 		{Method: "GET", Path: "/teams", Tag: "Teams", Summary: "List teams", Desc: "Members see only teams they belong to.", Access: accessSelf,
@@ -77,7 +77,7 @@ func (h *H) routes() []route {
 			Example: `{"name": "ml-platform", "models": ["llama-3.1-8b"], "max_budget": 500, "budget_period": "monthly"}`, handler: h.createTeam},
 		{Method: "GET", Path: "/teams/{id}", Tag: "Teams", Summary: "Get team", Access: accessSelf, Resp: "Team", handler: h.getTeam},
 		{Method: "PATCH", Path: "/teams/{id}", Tag: "Teams", Summary: "Update team", Access: accessViewer, Body: "Team", Resp: "Team", Example: `{"tpm_limit": 200000}`, handler: h.updateTeam},
-		{Method: "DELETE", Path: "/teams/{id}", Tag: "Teams", Summary: "Delete team", Desc: "Soft-deletes the team.", Access: accessViewer, Resp: "Deleted", handler: h.deleteTeam},
+		{Method: "DELETE", Path: "/teams/{id}", Tag: "Teams", Summary: "Delete team", Desc: "Soft-deletes the team. Its keys stop working until the team is restored.", Access: accessViewer, Resp: "Deleted", handler: h.deleteTeam},
 		{Method: "GET", Path: "/teams/{id}/members", Tag: "Teams", Summary: "List team members", Access: accessSelf, Resp: "list:TeamMember", handler: h.listMembers},
 		{Method: "POST", Path: "/teams/{id}/members", Tag: "Teams", Summary: "Add or update member", Desc: "Team admins and admins only. `role` is `team_admin` or `team_member`.",
 			Access: accessSelf, Body: "MemberInput", Resp: "TeamMember", Example: `{"user_id": "…", "role": "team_member", "max_budget": 20}`, handler: h.addMember},

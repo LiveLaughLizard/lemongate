@@ -221,6 +221,14 @@
       <div x-show="tab==='response'" x-cloak>
         {{if $l.ResponseBody}}<pre class="mono max-h-96 overflow-auto rounded-field bg-base-200 p-3">{{pretty $l.ResponseBody}}</pre>{{else}}<p class="text-sm opacity-60">No response body stored.</p>{{end}}
       </div>
+    {{else if .PayloadHidden}}
+      <div class="flex items-start gap-3 rounded-box border border-dashed border-base-300 p-4 text-sm">
+        <span class="opacity-50">{{icon "lock" "text-xl"}}</span>
+        <div>
+          <div class="font-medium">Payloads are hidden</div>
+          <p class="mt-0.5 text-xs opacity-60">Stored prompts and responses are only visible to admins and the owner of the request.</p>
+        </div>
+      </div>
     {{else}}
       <div class="flex items-start gap-3 rounded-box border border-dashed border-base-300 p-4 text-sm">
         <span class="opacity-50">{{icon "eye-off" "text-xl"}}</span>

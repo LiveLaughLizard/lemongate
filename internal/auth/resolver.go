@@ -71,26 +71,39 @@ func (r *Resolver) ResolveKey(ctx context.Context, token string) (*Principal, er
 		return nil, err
 	}
 	p := &Principal{Kind: "key", Key: &k, Role: RoleMember}
+	// Owner lookups fail closed: a key whose user or team is gone (or cannot be loaded)
+	// must not run without that owner's blocks, budgets and model restrictions.
 	if k.UserID != nil {
-		if u, err := r.store.GetUser(ctx, *k.UserID); err == nil {
-			p.User = &u
-			p.Role = u.Role
+		u, err := r.store.GetUser(ctx, *k.UserID)
+		if err != nil {
+			return nil, ownerErr(err)
 		}
+		p.User = &u
+		p.Role = u.Role
 	}
 	if k.TeamID != nil {
-		if t, err := r.store.GetTeam(ctx, *k.TeamID); err == nil && t.DeletedAt == nil {
-			p.Team = &t
-			if t.OrgID != nil {
-				if o, err := r.store.GetOrg(ctx, *t.OrgID); err == nil {
-					p.Org = &o
-				}
+		t, err := r.store.GetTeam(ctx, *k.TeamID)
+		if err != nil {
+			return nil, ownerErr(err)
+		}
+		if t.DeletedAt != nil {
+			return nil, ErrOwnerBlocked
+		}
+		p.Team = &t
+		if t.OrgID != nil {
+			o, err := r.store.GetOrg(ctx, *t.OrgID)
+			if err != nil {
+				return nil, ownerErr(err)
 			}
+			p.Org = &o
 		}
 	}
 	if p.Org == nil && p.User != nil && p.User.OrgID != nil {
-		if o, err := r.store.GetOrg(ctx, *p.User.OrgID); err == nil {
-			p.Org = &o
+		o, err := r.store.GetOrg(ctx, *p.User.OrgID)
+		if err != nil {
+			return nil, ownerErr(err)
 		}
+		p.Org = &o
 	}
 	switch k.Scope {
 	case "admin":
@@ -103,6 +116,13 @@ func (r *Resolver) ResolveKey(ctx context.Context, token string) (*Principal, er
 	}
 	r.cache.Add(hash, p)
 	return p, checkKey(p)
+}
+
+func ownerErr(err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return ErrOwnerBlocked
+	}
+	return err
 }
 
 func checkKey(p *Principal) error {

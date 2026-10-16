@@ -249,6 +249,11 @@ func (h *H) resolveUser(ctx context.Context, id Identity, role string, hasRole b
 			if u.SSOSubject != nil && *u.SSOSubject != "" && *u.SSOSubject != id.Subject {
 				return u, userError{"Account already linked", "This email is linked to a different single sign-on identity. Ask an administrator to unlink it."}
 			}
+			// Linking by email hands the existing account (possibly an admin) to whoever
+			// controls that address at the provider, so it must be verified.
+			if !id.EmailVerified && !h.cfg.TrustEmail {
+				return u, userError{"Email not verified", "An account with this email already exists, but your identity provider did not confirm that the address is verified, so it can't be linked automatically. Ask an administrator."}
+			}
 			if err := h.d.Store.LinkUserSSO(ctx, u.ID, id.Subject); err != nil {
 				return u, err
 			}
@@ -318,12 +323,7 @@ func (h *H) fail(w http.ResponseWriter, status int, heading, msg string, err err
 }
 
 // SafeNext keeps redirects inside the console.
-func SafeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/ui") || strings.HasPrefix(next, "//") || strings.ContainsAny(next, "\\\r\n") {
-		return "/ui"
-	}
-	return next
-}
+func SafeNext(next string) string { return ui.SafeNext(next) }
 
 // --- claims ---
 
@@ -332,6 +332,9 @@ type Identity struct {
 	Subject string
 	Email   string
 	Name    string
+	// EmailVerified is true only when the email claim itself was present and the
+	// provider asserted email_verified. Fallback usernames are never verified.
+	EmailVerified bool
 }
 
 // ExtractIdentity reads sub/email/name, falling back to common alternatives.
@@ -340,6 +343,12 @@ func ExtractIdentity(c map[string]any) (Identity, error) {
 	if id.Subject == "" {
 		return id, errors.New("the identity provider did not return a subject (sub) claim")
 	}
+	// Some providers send email_verified as a string in userinfo.
+	verified := c["email_verified"] == true || strings.EqualFold(str(c["email_verified"]), "true")
+	if c["email_verified"] == false || strings.EqualFold(str(c["email_verified"]), "false") {
+		return id, errors.New("your email address is not verified with the identity provider")
+	}
+	id.EmailVerified = id.Email != "" && verified
 	if id.Email == "" {
 		for _, k := range []string{"preferred_username", "upn", "unique_name"} {
 			if v := strings.ToLower(str(c[k])); strings.Contains(v, "@") {
@@ -350,9 +359,6 @@ func ExtractIdentity(c map[string]any) (Identity, error) {
 	}
 	if id.Email == "" {
 		return id, errors.New("your identity provider did not share an email address. Ask an administrator to add the \"email\" scope.")
-	}
-	if v, ok := c["email_verified"].(bool); ok && !v {
-		return id, errors.New("your email address is not verified with the identity provider")
 	}
 	id.Name = str(c["name"])
 	if id.Name == "" {

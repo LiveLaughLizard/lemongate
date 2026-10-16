@@ -27,6 +27,7 @@ binary, and Postgres is the only dependency.
 
 - [Features](#features)
 - [Quick start (Docker)](#quick-start-docker)
+- [Kubernetes (Helm)](#kubernetes-helm)
 - [Calling the gateway](#calling-the-gateway)
 - [Configuration](#configuration)
 - [Models, routing and reliability](#models-routing-and-reliability)
@@ -119,6 +120,31 @@ servers, or add deployments in the console under **Models**. Then create a virtu
 
 ---
 
+## Kubernetes (Helm)
+
+A Helm chart lives in [`deploy/helm/lemongate`](deploy/helm/lemongate). It runs hardened
+by default (non-root, read-only root filesystem, no capabilities). It supports an external
+database or a bundled single-instance Postgres, ingress, a ServiceMonitor and a
+NetworkPolicy.
+
+```bash
+kubectl create namespace lemongate
+kubectl -n lemongate create secret generic lemongate-secrets \
+  --from-literal=master-key="$(openssl rand -hex 24)" \
+  --from-literal=secret-key="$(openssl rand -hex 32)"
+
+helm install lemongate deploy/helm/lemongate -n lemongate \
+  --set image.repository=ghcr.io/<you>/lemongate \
+  --set secrets.existingSecret=lemongate-secrets \
+  --set postgresql.enabled=true \
+  --set postgresql.auth.password="$(openssl rand -hex 16)"
+```
+
+See the [chart README](deploy/helm/lemongate/README.md) for production values, secrets and
+every option.
+
+---
+
 ## Calling the gateway
 
 Any OpenAI SDK works. Set the base URL to `http://<host>:4000/v1` and use a LemonGate key as
@@ -176,7 +202,7 @@ LemonGate reads these optional fields and removes them before the request reache
 | `"guardrails": ["policy-name"]` | Runs extra guardrail policies for this request |
 | `Cache-Control: no-cache` | Skips cache lookup |
 | `Cache-Control: no-store` | Doesn't store the response in the cache |
-| `x-lemongate-cache-ttl: 60` | Per-request cache TTL in seconds, capped by the configured maximum |
+| `x-lemongate-cache-ttl: 60` | Per-request cache TTL in seconds, capped at 24 hours |
 
 ### Response headers
 
@@ -210,15 +236,15 @@ LemonGate is configured in three layers:
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | (required) | Postgres connection string (Postgres 14+) |
-| `LEMONGATE_MASTER_KEY` | (required) | Bootstrap admin credential for the gateway, API and console |
-| `LEMONGATE_SECRET_KEY` | master key | Encrypts stored secrets (AES-GCM). **Keep it stable:** changing it makes stored credentials unreadable |
+| `LEMONGATE_MASTER_KEY` | (required) | Bootstrap admin credential for the gateway, API and console. Must be at least 16 characters, and placeholders such as `change-me` are rejected (unless `LEMONGATE_DEV=1`). Changing it signs out sessions opened with the old key |
+| `LEMONGATE_SECRET_KEY` | master key | Encrypts stored secrets (AES-GCM). Same strength rules. Set it separately so the master key can be rotated. **Keep it stable:** changing it makes stored credentials unreadable |
 | `LEMONGATE_LISTEN` | `:4000` | Listen address |
 | `LEMONGATE_BASE_URL` | `http://localhost:4000` | Public URL, used for links, cookies and SSO redirects |
 | `LEMONGATE_CONFIG` | none | Path to a YAML config file |
 | `LEMONGATE_SESSION_HOURS` | `12` | Console session lifetime |
 | `LEMONGATE_METRICS_TOKEN` | none | Static bearer token for `/metrics`. Setting it forces scrape auth |
 | `LEMONGATE_DEBUG` | none | Set to `1` for debug logging |
-| `LEMONGATE_DEV` | none | Set to `1` to read templates and static files from disk (development only) |
+| `LEMONGATE_DEV` | none | Set to `1` to read templates and static files from disk and allow weak keys (development only) |
 
 OIDC single sign-on:
 
@@ -232,6 +258,7 @@ OIDC single sign-on:
 | `LEMONGATE_OIDC_DEFAULT_ROLE` | `member` | Role for auto-provisioned users |
 | `LEMONGATE_OIDC_DEFAULT_TEAM` | none | Team that new users join automatically |
 | `LEMONGATE_OIDC_BUTTON_LABEL` | `Continue with SSO` | Login button text |
+| `LEMONGATE_OIDC_TRUST_EMAIL` | none | Set to `1` to link existing accounts by email even when the provider doesn't assert `email_verified` |
 
 Email (for the email alert channel):
 
@@ -398,6 +425,16 @@ is created or regenerated. A key can have:
 Keys can be blocked, unblocked, regenerated or soft-deleted, and every change is recorded in
 the audit log.
 
+A few key actions are restricted:
+
+- Only admins can grant MCP servers on a key, or create management and admin keys.
+- Team admins manage their team's inference keys, but not management or admin keys
+  attached to the team.
+- Owners can block their own keys, but only an admin (or a team admin, for team keys) can
+  lift a block.
+- Deleting a user also deletes their keys. Deleting a team disables its keys until the team
+  is restored.
+
 ---
 
 ## Guardrails
@@ -431,6 +468,11 @@ groups of guardrails that apply:
 The console includes a **test bench** for trying text against your guardrails and an
 **event log** of every action they take. Blocked requests return `400` with type
 `guardrail_violation` and code `content_blocked`.
+
+> **Streaming and output guardrails.** A streamed response reaches the client as it is
+> generated, so post-call guardrails on streamed responses can only **log**. They can't
+> block or mask. If output masking is mandatory, have those clients call without
+> `stream: true`.
 
 ---
 
@@ -514,6 +556,11 @@ and register this redirect URI with your identity provider:
 Users are provisioned on first login with `LEMONGATE_OIDC_DEFAULT_ROLE`. If the
 `LEMONGATE_OIDC_ROLE_CLAIM` claim contains a value listed in `LEMONGATE_OIDC_ADMIN_VALUES`,
 the user becomes an admin.
+
+An existing account is linked to an SSO identity by email only when the provider asserts
+`email_verified`. If your directory omits that claim but doesn't let users change their
+email, set `LEMONGATE_OIDC_TRUST_EMAIL=1`. Accounts that sign in with SSO can't set a local
+password.
 
 ---
 
@@ -639,6 +686,12 @@ Migrations are embedded in the binary and also run automatically on `serve`.
 - **Payload logging is off by default.** Turn it on deliberately, and keep redaction enabled
   if prompts may contain personal data.
 - **Restrict `/metrics`** with a scrape token if it is reachable from untrusted networks.
+- **Browser hardening is built in.** Every response carries `X-Frame-Options: DENY`, a
+  `frame-ancestors 'none'` CSP, `nosniff` and `Referrer-Policy`, plus HSTS when the base URL
+  is https. Pass-through responses are sandboxed and can't set cookies. Console sign-in is
+  rate-limited per IP and per account, in memory on each replica.
+- **Client IPs** come from `X-Forwarded-For` / `X-Real-IP`. Put LemonGate behind a proxy
+  that overwrites these headers, so logged and rate-limited IPs can't be spoofed.
 - The container image is `distroless/static` and runs as non-root on port `4000`. Build it
   with `docker build --build-arg VERSION=$(git describe --tags --always) -t lemongate .`
 

@@ -41,3 +41,66 @@ func TestKeyFormat(t *testing.T) {
 		t.Fatalf("%s %s %s", plain, hash, hint)
 	}
 }
+
+func TestAllowedModelsFailsClosedOnEmptyGroups(t *testing.T) {
+	r := fakeResolver{groups: map[string][]string{}}
+	for name, p := range map[string]*Principal{
+		"key group":  {Kind: "key", Key: &store.Key{AccessGroups: []string{"deleted"}}},
+		"team group": {Kind: "key", Key: &store.Key{}, Team: &store.Team{Models: []string{"group:deleted"}}},
+	} {
+		got := p.AllowedModels(r)
+		if got == nil || len(got) != 0 || p.CanUseModel(r, "anything") {
+			t.Errorf("%s: allowed = %#v, want empty non-nil", name, got)
+		}
+	}
+	if (&Principal{Kind: "key", Key: &store.Key{}}).AllowedModels(r) != nil {
+		t.Error("key without restrictions should be unrestricted")
+	}
+}
+
+func TestTeamAdminKeyManagement(t *testing.T) {
+	team, uid, other := "t1", "u1", "u2"
+	p := &Principal{Kind: "session", Role: RoleMember, User: &store.User{ID: uid},
+		Memberships: []store.TeamMember{{TeamID: team, UserID: uid, Role: TeamRoleAdmin}}}
+	if !p.CanManageKey(store.Key{Scope: "inference", TeamID: &team, UserID: &other}) {
+		t.Error("team admin should manage team inference keys")
+	}
+	if p.CanManageKey(store.Key{Scope: "admin", TeamID: &team}) || p.CanManageKey(store.Key{Scope: "management", TeamID: &team}) {
+		t.Error("team admin must not manage management/admin keys bound to the team")
+	}
+}
+
+func TestCheckKeyEdit(t *testing.T) {
+	team, uid := "t1", "u1"
+	member := &Principal{Kind: "session", Role: RoleMember, User: &store.User{ID: uid},
+		Memberships: []store.TeamMember{{TeamID: team, UserID: uid, Role: TeamRoleMember}}}
+	owned := store.Key{Scope: "inference", UserID: &uid, TeamID: &team, MCPServers: []string{"docs"}, Blocked: true}
+
+	if err := member.CheckKeyEdit(nil, &store.Key{UserID: &uid, MCPServers: []string{"prod-db"}}); err == nil {
+		t.Error("member granted an MCP server on create")
+	}
+	k := owned
+	k.MCPServers = []string{"docs", "prod-db"}
+	if err := member.CheckKeyEdit(&owned, &k); err == nil {
+		t.Error("member added an MCP server on update")
+	}
+	k = owned
+	k.MCPServers = nil
+	if err := member.CheckKeyEdit(&owned, &k); err != nil {
+		t.Errorf("removing an MCP server should be allowed: %v", err)
+	}
+	k = owned
+	k.TeamID = nil
+	if err := member.CheckKeyEdit(&owned, &k); err == nil {
+		t.Error("team member detached a key from its team")
+	}
+	k = owned
+	k.Blocked = false
+	if err := member.CheckKeyEdit(&owned, &k); err == nil {
+		t.Error("owner unblocked a blocked key")
+	}
+	admin := &Principal{Kind: "master", Role: RoleAdmin}
+	if err := admin.CheckKeyEdit(&owned, &k); err != nil {
+		t.Errorf("admin edit rejected: %v", err)
+	}
+}

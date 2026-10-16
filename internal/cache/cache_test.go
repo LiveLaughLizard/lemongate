@@ -130,3 +130,29 @@ func TestResizeEvicts(t *testing.T) {
 		t.Fatal("newest entry should survive")
 	}
 }
+
+func TestSessionsScopedByUser(t *testing.T) {
+	c := New(nil)
+	body := map[string]any{"messages": "x"}
+	key := func(p *auth.Principal) string {
+		k, ok := c.Key(hooks.CallInfo{Route: "chat/completions", Model: "llama", Principal: p}, body)
+		if !ok {
+			t.Fatal("expected cacheable")
+		}
+		return k
+	}
+	alice := key(&auth.Principal{Kind: "session", User: &store.User{ID: "u1"}})
+	bob := key(&auth.Principal{Kind: "session", User: &store.User{ID: "u2"}})
+	if alice == bob {
+		t.Fatal("different console users must not share entries")
+	}
+	if again := key(&auth.Principal{Kind: "session", User: &store.User{ID: "u1"}}); again != alice {
+		t.Fatal("same user should hit the same entry")
+	}
+	if key(&auth.Principal{Kind: "session", Role: auth.RoleAdmin}) != key(&auth.Principal{Kind: "master"}) {
+		t.Fatal("master session and master key share a scope")
+	}
+	if key(&auth.Principal{Kind: "master"}) == alice {
+		t.Fatal("master must not share a user's entries")
+	}
+}

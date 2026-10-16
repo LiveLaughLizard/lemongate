@@ -3,8 +3,10 @@ package gateway
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime/multipart"
 	"net/http"
 	"strings"
@@ -24,28 +26,15 @@ func (g *Gateway) handleTranscription(w http.ResponseWriter, r *http.Request) {
 	route := strings.TrimPrefix(strings.TrimPrefix(r.URL.Path, "/v1"), "/")
 	reqID := newRequestID()
 	w.Header().Set("x-lemongate-request-id", reqID)
-	if err := r.ParseMultipartForm(64 << 20); err != nil {
-		WriteError(w, errBadRequest("expected multipart/form-data body: "+err.Error()))
-		return
-	}
-	requested := r.FormValue("model")
-	group := g.Registry.Resolve(requested)
-	if !g.Registry.HasGroup(group) {
-		WriteError(w, errNotFound(fmt.Sprintf("The model '%s' does not exist or you do not have access to it.", requested)))
-		return
-	}
-	if !p.CanUseModel(g.Registry, group) {
-		WriteError(w, errForbidden(fmt.Sprintf("This key is not allowed to access model '%s'.", requested)))
-		return
-	}
-	c := &call{ep: endpoint{route: route}, p: p, start: start, requested: requested, group: group,
-		info: hooks.CallInfo{RequestID: reqID, Route: route, Model: group, Principal: p},
-		rec: spend.Record{RequestID: reqID, Route: route, Model: requested, ModelGroup: group, KeyID: p.KeyID(),
-			UserID: p.UserID(), TeamID: p.TeamID(), OrgID: p.OrgID(), Metadata: map[string]any{}}}
+	c := &call{ep: endpoint{route: route}, p: p, start: start,
+		info: hooks.CallInfo{RequestID: reqID, Route: route, Principal: p},
+		rec: spend.Record{RequestID: reqID, Route: route, KeyID: p.KeyID(), UserID: p.UserID(), TeamID: p.TeamID(),
+			OrgID: p.OrgID(), Metadata: map[string]any{}}}
 	if p.Key != nil {
 		c.rec.KeyAlias = p.Key.Alias
 		c.rec.Tags = p.Key.Tags
 	}
+	// Budgets and rate limits apply before the upload is read.
 	if err := g.checkBudgets(r.Context(), p, "", c.rec.Tags); err != nil {
 		metrics.BudgetRejected.Inc()
 		g.fail(w, c, &APIError{Status: 429, Message: err.Error(), Type: "budget_exceeded", Code: "budget_exceeded"}, "blocked")
@@ -58,6 +47,28 @@ func (g *Gateway) handleTranscription(w http.ResponseWriter, r *http.Request) {
 	}
 	defer release(0)
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxBody(g.Settings.Current()))
+	if err := r.ParseMultipartForm(64 << 20); err != nil {
+		if errors.As(err, new(*http.MaxBytesError)) {
+			WriteError(w, errBody(err))
+		} else {
+			WriteError(w, errBadRequest("expected multipart/form-data body: "+err.Error()))
+		}
+		return
+	}
+	requested := r.FormValue("model")
+	group := g.Registry.Resolve(requested)
+	if !g.Registry.HasGroup(group) {
+		WriteError(w, errNotFound(fmt.Sprintf("The model '%s' does not exist or you do not have access to it.", requested)))
+		return
+	}
+	if !p.CanUseModel(g.Registry, group) {
+		WriteError(w, errForbidden(fmt.Sprintf("This key is not allowed to access model '%s'.", requested)))
+		return
+	}
+	c.requested, c.group, c.info.Model = requested, group, group
+	c.rec.Model, c.rec.ModelGroup = requested, group
+
 	rs := g.Settings.Current().Routing
 	exclude := map[string]bool{}
 	var lastErr *APIError
@@ -67,14 +78,22 @@ func (g *Gateway) handleTranscription(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 		c.rec.Attempts++
+		sent := time.Now()
 		resp, err := g.sendMultipart(r.Context(), dep, r.MultipartForm, route)
 		if err != nil || resp.StatusCode >= 500 || resp.StatusCode == 429 {
-			dep.End(false, 0, 0, rs)
+			// A client that hangs up must not count against the deployment.
+			dep.End(err != nil && r.Context().Err() != nil, time.Since(sent), 0, rs)
 			exclude[dep.ID] = true
 			if err != nil {
-				lastErr = &APIError{Status: 502, Type: "upstream_error", Message: err.Error()}
+				// The transport error names the upstream URL: keep it out of the client message.
+				lastErr = &APIError{Status: 502, Type: "upstream_error", Code: "upstream_unreachable",
+					Message: fmt.Sprintf("upstream request for model '%s' failed", group),
+					detail:  fmt.Sprintf("upstream %s for model '%s' failed: %v", routing.RedactBase(dep.APIBase), group, err)}
+				if r.Context().Err() == nil {
+					slog.Warn("upstream request failed", "request_id", reqID, "model", group, "api_base", routing.RedactBase(dep.APIBase), "err", err)
+				}
 			} else {
-				b, _ := io.ReadAll(resp.Body)
+				b, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 				resp.Body.Close()
 				lastErr = upstreamError(resp.StatusCode, b)
 			}
@@ -84,11 +103,11 @@ func (g *Gateway) handleTranscription(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(resp.Body)
 		lat := time.Since(start)
 		dep.End(resp.StatusCode < 400, lat, 0, rs)
-		c.rec.DeploymentID, c.rec.APIBase = depID(dep), dep.APIBase
+		c.rec.DeploymentID, c.rec.APIBase = depID(dep), routing.RedactBase(dep.APIBase)
 		c.rec.HTTPStatus, c.rec.LatencyMs, c.rec.Status = resp.StatusCode, int(lat.Milliseconds()), "success"
 		if resp.StatusCode >= 400 {
 			c.rec.Status = "error"
-			c.rec.Error = string(body)
+			c.rec.Error = upstreamError(resp.StatusCode, body).Message
 		}
 		g.record(c.rec)
 		copyHeaders(w, resp)

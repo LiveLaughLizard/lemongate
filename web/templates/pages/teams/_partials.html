@@ -50,13 +50,13 @@
               {{if $p.IsAdmin}}
                 {{if $.Data.Deleted}}
                   <li><button hx-post="/ui/teams/{{.ID}}/restore">{{icon "rotate-ccw"}} Restore</button></li>
-                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/purge" hx-confirm="Permanently delete {{.Name}}? Members are removed and its keys lose their team. Request logs are kept.">{{icon "trash-2"}} Delete forever</button></li>
+                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/purge" hx-confirm="Permanently delete {{.Name}}? Members are removed and its keys are deleted. Request logs are kept.">{{icon "trash-2"}} Delete forever</button></li>
                 {{else}}
                   <li><button hx-get="/ui/teams/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
                   <li><button hx-get="/ui/teams/{{.ID}}/members/new" hx-target="#modal-body">{{icon "user-plus"}} Add member</button></li>
                   {{if .Blocked}}<li><button hx-post="/ui/teams/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
                   {{else}}<li><button hx-post="/ui/teams/{{.ID}}/block" hx-confirm="Block {{.Name}}? Every key belonging to the team will be rejected.">{{icon "ban"}} Block</button></li>{{end}}
-                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/delete" hx-confirm="Delete {{.Name}}? You can restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button></li>
+                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/delete" hx-confirm="Delete {{.Name}}? Its keys stop working until you restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button></li>
                 {{end}}
               {{else if and (eq $role "team_admin") (not $p.ReadOnly)}}
                 <li><button hx-get="/ui/teams/{{.ID}}/members/new" hx-target="#modal-body">{{icon "user-plus"}} Add member</button></li>
@@ -189,7 +189,7 @@
       {{if .Team.Blocked}}<button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/unblock">{{icon "lock-open"}} Unblock</button>
       {{else}}<button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/block" hx-confirm="Block this team? Every team key will be rejected.">{{icon "ban"}} Block</button>{{end}}
       <button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/reset-spend" hx-confirm="Reset this team's spend counter to $0?">{{icon "rotate-ccw"}} Reset spend</button>
-      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/teams/{{.Team.ID}}/delete?from=detail" hx-confirm="Delete this team? You can restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button>
+      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/teams/{{.Team.ID}}/delete?from=detail" hx-confirm="Delete this team? Its keys stop working until you restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button>
       {{end}}
       {{if and .IsAdmin .Team.DeletedAt}}
       <button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/restore">{{icon "rotate-ccw"}} Restore</button>

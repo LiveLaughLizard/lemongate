@@ -9,6 +9,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"lemongate/internal/metrics"
+	"lemongate/internal/routing"
 )
 
 // liveCollector reports state at scrape time: deployments, cache, the log queue
@@ -84,7 +85,7 @@ func (c *liveCollector) Collect(ch chan<- prometheus.Metric) {
 			continue
 		}
 		perGroup[d.Name]++
-		lv := []string{d.Name, d.APIBase, d.ID}
+		lv := []string{d.Name, routing.RedactBase(d.APIBase), d.ID}
 		ch <- prometheus.MustNewConstMetric(descInFlight, prometheus.GaugeValue, float64(d.InFlight()), lv...)
 		ch <- prometheus.MustNewConstMetric(descCooling, prometheus.GaugeValue, b2f(d.CoolingDown()), lv...)
 		if ms := d.LatencyMs(); ms > 0 {

@@ -5,6 +5,7 @@ package routing
 import (
 	"context"
 	"math/rand/v2"
+	"net/url"
 	"slices"
 	"sort"
 	"sync"
@@ -18,6 +19,17 @@ import (
 )
 
 // Deployment is a routable upstream with live counters.
+// RedactBase drops credentials, query and fragment from an api_base so it can be
+// used in metric labels, logs and stored records.
+func RedactBase(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+	return u.String()
+}
+
 type Deployment struct {
 	store.Deployment
 

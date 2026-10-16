@@ -1,10 +1,10 @@
 // Package cache is an in-memory, exact-match response cache.
 //
-// Keys are a SHA-256 over the route, the resolved model group, the calling key
-// (when settings.cache.per_key is on) and the canonical JSON of the request body
-// after gateway-only fields were stripped and guardrails ran. Canonical means
-// object keys are sorted (encoding/json sorts map keys), so semantically equal
-// requests that only differ in key order share an entry.
+// Keys are a SHA-256 over the route, the resolved model group, the caller (API key
+// or console user, when settings.cache.per_key is on) and the canonical JSON of the
+// request body after gateway-only fields were stripped and guardrails ran.
+// Canonical means object keys are sorted (encoding/json sorts map keys), so
+// semantically equal requests that only differ in key order share an entry.
 //
 // What is cached: non-streaming chat/completions, completions, embeddings, rerank
 // and score responses. Not cached: streaming requests, requests asking for several
@@ -26,6 +26,7 @@ import (
 
 	"github.com/hashicorp/golang-lru/v2/expirable"
 
+	"lemongate/internal/auth"
 	"lemongate/internal/hooks"
 	"lemongate/internal/settings"
 )
@@ -138,10 +139,7 @@ func (c *Cache) Key(info hooks.CallInfo, body map[string]any) (string, bool) {
 	}
 	scope := ""
 	if c.settings == nil || c.settings.Current().Cache.PerKey {
-		scope = info.Principal.KeyID()
-		if scope == "" && info.Principal != nil {
-			scope = info.Principal.Kind
-		}
+		scope = principalScope(info.Principal)
 	}
 	h := sha256.New()
 	for _, part := range []string{info.Route, info.Model, scope} {
@@ -151,6 +149,22 @@ func (c *Cache) Key(info hooks.CallInfo, body map[string]any) (string, bool) {
 	h.Write(canon)
 	// The model and route ride along in the key so lookups can be attributed.
 	return info.Model + "\x00" + info.Route + "\x00" + hex.EncodeToString(h.Sum(nil)), true
+}
+
+// principalScope partitions per-key caching: API keys by id, console sessions by
+// user (so users never share playground answers), master credentials together.
+func principalScope(p *auth.Principal) string {
+	switch {
+	case p == nil:
+		return ""
+	case p.KeyID() != "":
+		return p.KeyID()
+	case p.UserID() != "":
+		return "user:" + p.UserID()
+	case p.Kind == "master" || p.Kind == "session":
+		return "master" // sessions without a user are master-key logins
+	}
+	return p.Kind
 }
 
 func splitKey(key string) (model, route string) {

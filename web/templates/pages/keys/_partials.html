@@ -168,7 +168,9 @@
         </div>
       </fieldset>
       {{end}}
-      {{if .MCPServers}}
+      {{if not .CanSetScope}}
+      {{range .Key.MCPServers}}<input type="hidden" name="mcp_servers" value="{{.}}">{{end}}
+      {{else if .MCPServers}}
       <fieldset class="fieldset">
         <legend class="fieldset-legend">MCP servers</legend>
         <div class="flex flex-wrap gap-3">

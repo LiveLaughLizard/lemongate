@@ -5,7 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
+	"net/url"
+	"strings"
 	"sync"
 	"time"
 
@@ -45,17 +48,32 @@ type upstream struct {
 
 func newUpstream(g *Gateway, cfg Server) *upstream { return &upstream{g: g, cfg: cfg} }
 
-// headerTransport injects the upstream auth header into every request.
+// headerTransport injects the upstream auth header into requests to the
+// configured server's origin only, never into redirects or SSE message
+// endpoints that point at another host.
 type headerTransport struct {
 	base   http.RoundTripper
+	origin string // origin(server URL)
 	header string
 	value  string
 }
 
 func (t *headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	if origin(r.URL) != t.origin {
+		return t.base.RoundTrip(r)
+	}
 	r = r.Clone(r.Context())
 	r.Header.Set(t.header, t.value)
 	return t.base.RoundTrip(r)
+}
+
+// origin returns "scheme://host:port" in lower case with the default port made explicit.
+func origin(u *url.URL) string {
+	scheme, port := strings.ToLower(u.Scheme), u.Port()
+	if port == "" {
+		port = map[string]string{"http": "80", "https": "443"}[scheme]
+	}
+	return scheme + "://" + net.JoinHostPort(strings.ToLower(u.Hostname()), port)
 }
 
 // dial opens a new client session for cfg. The session lives until cancel is called.
@@ -66,7 +84,11 @@ func (g *Gateway) dial(ctx context.Context, cfg Server, onToolsChanged func()) (
 	}
 	var rt http.RoundTripper = g.httpTransport
 	if secret != "" {
-		rt = &headerTransport{base: rt, header: cfg.AuthHeader, value: cfg.AuthPrefix + secret}
+		u, err := url.Parse(cfg.URL)
+		if err != nil {
+			return nil, nil, errors.New("invalid server URL")
+		}
+		rt = &headerTransport{base: rt, origin: origin(u), header: cfg.AuthHeader, value: cfg.AuthPrefix + secret}
 	}
 	hc := &http.Client{Transport: rt}
 	var t mcp.Transport

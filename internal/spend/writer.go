@@ -3,13 +3,23 @@
 package spend
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
+	"math"
+	"net"
+	"slices"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"lemongate/internal/metrics"
@@ -52,9 +62,13 @@ func Cost(promptTokens, completionTokens int, inputPerM, outputPerM float64) flo
 	return float64(promptTokens)*inputPerM/1e6 + float64(completionTokens)*outputPerM/1e6
 }
 
+// maxRetained bounds the records held in memory while the database is unreachable.
+const maxRetained = 20000
+
 type Writer struct {
-	pool *pgxpool.Pool
-	ch   chan Record
+	pool    *pgxpool.Pool
+	ch      chan Record
+	flushFn func(context.Context, []Record) error // w.flush; replaced in tests
 
 	mu      sync.Mutex
 	pending map[string]float64 // entity → unflushed spend
@@ -64,7 +78,9 @@ type Writer struct {
 }
 
 func NewWriter(pool *pgxpool.Pool) *Writer {
-	return &Writer{pool: pool, ch: make(chan Record, 10000), pending: map[string]float64{}}
+	w := &Writer{pool: pool, ch: make(chan Record, 10000), pending: map[string]float64{}}
+	w.flushFn = w.flush
+	return w
 }
 
 // Observe registers a callback run (synchronously, keep it cheap) for every record.
@@ -77,6 +93,8 @@ func (w *Writer) Submit(r Record) {
 	if r.CreatedAt.IsZero() {
 		r.CreatedAt = time.Now()
 	}
+	// Sanitize before computing pending entities so they match what is written.
+	r = sanitize(r)
 	if r.Cost > 0 {
 		w.mu.Lock()
 		for _, e := range entities(r) {
@@ -90,8 +108,9 @@ func (w *Writer) Submit(r Record) {
 	select {
 	case w.ch <- r:
 	default:
+		w.settle([]Record{r})
 		metrics.SpendDropped.Inc()
-		slog.Warn("spend writer queue full; dropping log record", "request_id", r.RequestID)
+		slog.Warn("spend writer queue full; dropping log record", "request_id", r.RequestID, "cost", r.Cost)
 	}
 }
 
@@ -131,37 +150,34 @@ func (w *Writer) Run(ctx context.Context) {
 	tick := time.NewTicker(time.Second)
 	defer tick.Stop()
 	var batch []Record
+	failing := false // the last flush hit a transient error: only retry on the tick
 	flush := func() {
 		if len(batch) == 0 {
 			return
 		}
-		fctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		if err := w.flush(fctx, batch); err != nil {
-			slog.Error("spend flush failed", "err", err, "records", len(batch))
-		}
-		cancel()
-		w.mu.Lock()
-		for _, r := range batch {
-			if r.Cost > 0 {
-				for _, e := range entities(r) {
-					w.pending[e] -= r.Cost
-					if w.pending[e] < 1e-12 {
-						delete(w.pending, e)
-					}
-				}
+		settled, retry, committed := w.write(batch)
+		if committed > 0 {
+			// Reload cached spend before releasing pending, so budgets briefly count
+			// a record twice rather than not at all.
+			for _, fn := range w.afterFlush {
+				fn()
 			}
 		}
-		w.mu.Unlock()
-		for _, fn := range w.afterFlush {
-			fn()
+		if over := len(retry) - maxRetained; over > 0 {
+			metrics.SpendDropped.Add(float64(over))
+			slog.Error("spend writer backlog full; dropping oldest records", "records", over)
+			settled = append(settled, retry[:over]...)
+			retry = slices.Clone(retry[over:])
 		}
-		batch = batch[:0]
+		w.settle(settled)
+		failing = len(retry) > 0
+		batch = retry
 	}
 	for {
 		select {
 		case r := <-w.ch:
 			batch = append(batch, r)
-			if len(batch) >= 500 {
+			if len(batch) >= 500 && !failing {
 				flush()
 			}
 		case <-tick.C:
@@ -173,11 +189,94 @@ func (w *Writer) Run(ctx context.Context) {
 					batch = append(batch, r)
 				default:
 					flush()
+					if len(batch) > 0 {
+						metrics.SpendDropped.Add(float64(len(batch)))
+						slog.Error("spend writer stopped with unwritten records", "records", len(batch))
+					}
 					return
 				}
 			}
 		}
 	}
+}
+
+// settle releases the pending spend of records that were written or given up on.
+func (w *Writer) settle(recs []Record) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	for _, r := range recs {
+		if r.Cost <= 0 {
+			continue
+		}
+		for _, e := range entities(r) {
+			w.pending[e] -= r.Cost
+			if w.pending[e] < 1e-12 {
+				delete(w.pending, e)
+			}
+		}
+	}
+}
+
+// write persists recs. When the database rejects the batch it is split, so a
+// record that cannot be stored only takes itself down. It returns the records
+// that were committed or dropped (settled), those that hit a transient error and
+// should be retried, and how many were committed.
+func (w *Writer) write(recs []Record) (settled, retry []Record, committed int) {
+	err := w.tryFlush(recs)
+	switch {
+	case err == nil:
+		return recs, nil, len(recs)
+	case transient(err):
+		slog.Warn("spend flush failed; will retry", "err", err, "records", len(recs))
+		return nil, recs, 0
+	case len(recs) > 1:
+		slog.Warn("spend flush rejected; retrying in smaller batches", "err", err, "records", len(recs))
+		mid := len(recs) / 2
+		s1, r1, c1 := w.write(recs[:mid])
+		s2, r2, c2 := w.write(recs[mid:])
+		return slices.Concat(s1, s2), slices.Concat(r1, r2), c1 + c2
+	}
+	// A single record the database refuses: keep its accounting and drop the
+	// free-form parts (payloads, metadata) that most likely caused it.
+	r := recs[0]
+	slim := r
+	slim.RequestBody, slim.ResponseBody = nil, nil
+	slim.Metadata = map[string]any{"payloads_dropped": true}
+	err2 := w.tryFlush([]Record{slim})
+	switch {
+	case err2 == nil:
+		slog.Warn("spend record stored without payloads or metadata after the database rejected it",
+			"request_id", r.RequestID, "err", err)
+		return recs, nil, 1
+	case transient(err2):
+		return nil, recs, 0
+	}
+	metrics.SpendDropped.Inc()
+	slog.Error("dropping spend record rejected by the database", "request_id", r.RequestID, "cost", r.Cost, "err", err2)
+	return recs, nil, 0
+}
+
+func (w *Writer) tryFlush(recs []Record) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return w.flushFn(ctx, recs)
+}
+
+// transient reports failures where the database could not be reached or asked
+// for a retry, as opposed to rejecting the data.
+func transient(err error) bool {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		switch pgErr.Code[:min(len(pgErr.Code), 2)] {
+		case "08", "40", "53", "57": // connection, rollback (deadlock), resources, operator intervention
+			return true
+		}
+		return false
+	}
+	var connErr *pgconn.ConnectError
+	var netErr net.Error
+	return errors.As(err, &connErr) || errors.As(err, &netErr) || pgconn.Timeout(err) ||
+		errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 func nullUUID(s string) any {
@@ -337,4 +436,165 @@ func bump(a *agg, r Record) {
 	a.ct += int64(r.CompletionTokens)
 	a.cost += r.Cost
 	a.lat += int64(r.LatencyMs)
+}
+
+// Bounds for client-supplied attribution. Tags and end users are part of the
+// rollup tables' primary keys, so they must stay well under the index row limit.
+const (
+	MaxTags         = 32
+	MaxTagLen       = 128
+	MaxEndUserLen   = 256
+	MaxMetadataSize = 16 << 10 // bytes of JSON
+)
+
+// CleanText makes s storable in a Postgres text column, which rejects NUL bytes
+// and invalid UTF-8.
+func CleanText(s string) string {
+	if strings.IndexByte(s, 0) < 0 && utf8.ValidString(s) {
+		return s
+	}
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "")
+}
+
+// truncate cuts s to at most n bytes without splitting a UTF-8 sequence.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
+}
+
+// CleanEndUser bounds a client-supplied end-user id.
+func CleanEndUser(s string) string { return truncate(CleanText(s), MaxEndUserLen) }
+
+// CleanTags makes tags storable, drops empties and duplicates, and keeps at most
+// MaxTags of them (earlier tags win).
+func CleanTags(tags []string) []string {
+	if tags == nil {
+		return nil
+	}
+	out := make([]string, 0, min(len(tags), MaxTags))
+	for _, t := range tags {
+		t = strings.TrimSpace(truncate(strings.TrimSpace(CleanText(t)), MaxTagLen))
+		if t == "" || slices.Contains(out, t) {
+			continue
+		}
+		if len(out) == MaxTags {
+			break
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
+// CleanMetadata strips NULs from keys and values (recursively) and replaces
+// metadata whose JSON encoding exceeds MaxMetadataSize with a small marker.
+func CleanMetadata(md map[string]any) map[string]any {
+	out, _ := cleanValue(md).(map[string]any)
+	b, err := json.Marshal(out)
+	if err != nil || len(b) > MaxMetadataSize {
+		return map[string]any{"truncated": true, "bytes": len(b)}
+	}
+	return out
+}
+
+// cleanValue returns a copy of a decoded JSON value that Postgres accepts as jsonb:
+// no NULs in strings or keys, valid UTF-8, and numbers within numeric's range.
+func cleanValue(v any) any {
+	switch t := v.(type) {
+	case string:
+		return CleanText(t)
+	case map[string]any:
+		out := make(map[string]any, len(t))
+		for k, x := range t {
+			out[CleanText(k)] = cleanValue(x)
+		}
+		return out
+	case []any:
+		out := make([]any, len(t))
+		for i, x := range t {
+			out[i] = cleanValue(x)
+		}
+		return out
+	case []string:
+		out := make([]string, len(t))
+		for i, x := range t {
+			out[i] = CleanText(x)
+		}
+		return out
+	case json.Number:
+		// Literals like 1e999999 decode fine but overflow Postgres numeric.
+		if len(t) <= 32 && !strings.ContainsAny(string(t), "eE") {
+			return t
+		}
+		f, err := t.Float64()
+		if err != nil || math.IsInf(f, 0) {
+			return string(t)
+		}
+		return json.Number(strconv.FormatFloat(f, 'g', -1, 64))
+	case float64:
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return nil
+		}
+	}
+	return v
+}
+
+// cleanJSON returns b, re-encoded without what Postgres refuses in jsonb when it
+// contains any. Invalid JSON yields nil.
+func cleanJSON(b []byte) []byte {
+	if len(b) == 0 || !jsonNeedsClean(b) {
+		return b
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if enc.Encode(cleanValue(v)) != nil {
+		return nil
+	}
+	return bytes.TrimSuffix(buf.Bytes(), []byte("\n"))
+}
+
+// jsonNeedsClean reports whether b holds a \u0000 escape, an escaped UTF-16
+// surrogate (Postgres rejects unpaired ones), a raw NUL or invalid UTF-8.
+func jsonNeedsClean(b []byte) bool {
+	if bytes.IndexByte(b, 0) >= 0 || !utf8.Valid(b) {
+		return true
+	}
+	for i := 0; i < len(b); i++ {
+		if b[i] != '\\' {
+			continue
+		}
+		i++ // the escaped character, so an escaped backslash followed by "u0000" is not matched
+		if i+4 < len(b) && b[i] == 'u' {
+			if c, err := strconv.ParseUint(string(b[i+1:i+5]), 16, 16); err == nil && (c == 0 || c >= 0xD800 && c <= 0xDFFF) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// sanitize returns r with every text and JSON field made storable.
+func sanitize(r Record) Record {
+	for _, f := range []*string{&r.RequestID, &r.Route, &r.Model, &r.ModelGroup, &r.APIBase, &r.KeyAlias, &r.Status, &r.Error} {
+		*f = CleanText(*f)
+	}
+	r.EndUser = CleanEndUser(r.EndUser)
+	r.Tags = CleanTags(r.Tags)
+	if r.Metadata != nil {
+		r.Metadata, _ = cleanValue(r.Metadata).(map[string]any)
+	}
+	r.RequestBody = cleanJSON(r.RequestBody)
+	r.ResponseBody = cleanJSON(r.ResponseBody)
+	return r
 }

@@ -29,6 +29,12 @@ import (
 
 const SessionCookie = "lg_session"
 
+var errCSRF = errors.New("missing or invalid CSRF token")
+
+// authErrors are the authentication outcomes safe to show a client; anything else
+// (e.g. a database error naming its host) is logged and reported generically.
+var authErrors = []error{auth.ErrInvalidKey, auth.ErrKeyBlocked, auth.ErrKeyExpired, auth.ErrOwnerBlocked, errCSRF}
+
 type Gateway struct {
 	Store    *store.Store
 	Resolver *auth.Resolver
@@ -101,7 +107,7 @@ func (g *Gateway) Authenticate(next http.Handler) http.Handler {
 			if c, cerr := r.Cookie(SessionCookie); cerr == nil {
 				p, err = g.Resolver.ResolveSession(r.Context(), c.Value)
 				if err == nil && !auth.ConstantTimeEqual(r.Header.Get("X-CSRF-Token"), p.SessionCSRF) {
-					err = errors.New("missing or invalid CSRF token")
+					err = errCSRF
 				}
 			} else {
 				err = auth.ErrNoCredentials
@@ -111,8 +117,12 @@ func (g *Gateway) Authenticate(next http.Handler) http.Handler {
 		}
 		if err != nil {
 			msg := err.Error()
-			if errors.Is(err, auth.ErrNoCredentials) {
+			switch {
+			case errors.Is(err, auth.ErrNoCredentials):
 				msg = "Missing API key. Pass it as 'Authorization: Bearer <key>'."
+			case !slices.ContainsFunc(authErrors, func(e error) bool { return errors.Is(err, e) }):
+				slog.Error("authentication failed", "err", err)
+				msg = "credentials could not be verified"
 			}
 			WriteError(w, errAuth(msg))
 			return

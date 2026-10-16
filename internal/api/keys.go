@@ -82,8 +82,8 @@ func applyKey(p *auth.Principal, k *store.Key, before *store.Key, expiresIn *str
 				return "you can only create keys for yourself"
 			}
 		}
-		if k.TeamID != nil && (before == nil || store.Deref(before.TeamID) != *k.TeamID) && !p.IsTeamAdmin(*k.TeamID) {
-			return "you can only assign keys to teams you administer"
+		if err := p.CheckKeyEdit(before, k); err != nil {
+			return err.Error()
 		}
 		if k.UserID == nil && k.TeamID == nil {
 			if p.User == nil {
@@ -256,6 +256,10 @@ func (h *H) blockKey(blocked bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		k, ok := h.loadKey(w, r, true)
 		if !ok {
+			return
+		}
+		if !blocked && k.Blocked && !principal(r).CanUnblockKey(k) {
+			forbidden(w, "only an admin can unblock this key")
 			return
 		}
 		if err := h.d.Store.SetKeyBlocked(r.Context(), k.ID, blocked); err != nil {

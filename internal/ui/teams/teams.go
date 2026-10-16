@@ -549,6 +549,12 @@ func (h *H) updateMember(w http.ResponseWriter, r *http.Request) {
 		h.d.Partial(w, r, 422, area, "member-form", fd)
 		return
 	}
+	if m.UserID == p.UserID() && !p.IsAdmin() && !sameBudget(before.MaxBudget, m.MaxBudget) {
+		fd := h.memberFormFor(r.Context(), p, t, m, false)
+		fd.Error = "You can't change your own member budget. Ask an admin."
+		h.d.Partial(w, r, 422, area, "member-form", fd)
+		return
+	}
 	if err := h.d.Store.UpsertTeamMember(r.Context(), t.ID, m.UserID, m.Role, m.MaxBudget); err != nil {
 		ui.Fail(w, 500, err.Error())
 		return
@@ -600,4 +606,8 @@ func (h *H) keys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.d.Partial(w, r, 200, area, "team-keys", keysData{Team: t, Keys: keys, CanCreate: p.IsTeamAdmin(t.ID) && !p.ReadOnly() && t.DeletedAt == nil})
+}
+
+func sameBudget(a, b *float64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }

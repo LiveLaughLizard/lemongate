@@ -44,7 +44,7 @@ models:
     upstream_model: mock-prompt-guard-2
     mode: classify
 YAML
-MASTER="e2e-master-$RANDOM$RANDOM"
+MASTER="e2e-master-$(od -An -N12 -tx1 /dev/urandom | tr -d ' \n')"
 DATABASE_URL="$E2E_URL" LEMONGATE_MASTER_KEY="$MASTER" LEMONGATE_CONFIG="$WORK/config.yaml" \
   LEMONGATE_LISTEN=":$PORT" LEMONGATE_BASE_URL="http://localhost:$PORT" \
   "$WORK/lemongate" serve >"$WORK/lemongate.log" 2>&1 &

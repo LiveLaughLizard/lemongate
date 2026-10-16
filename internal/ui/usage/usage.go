@@ -338,7 +338,7 @@ func (h *H) export(w http.ResponseWriter, r *http.Request) {
 		"prompt_tokens", "completion_tokens", "total_tokens", "cost_usd", "avg_latency_ms"})
 	from, to := ps.From.Format("2006-01-02"), ps.To.Format("2006-01-02")
 	for _, row := range rows {
-		_ = cw.Write([]string{row.Key, csvSafe(row.Label), from, to, strconv.FormatInt(row.Requests, 10), strconv.FormatInt(row.Failures, 10),
+		_ = cw.Write([]string{csvSafe(row.Key), csvSafe(row.Label), from, to, strconv.FormatInt(row.Requests, 10), strconv.FormatInt(row.Failures, 10),
 			strconv.FormatFloat(row.ErrorRate(), 'f', 2, 64), strconv.FormatInt(row.CacheHits, 10),
 			strconv.FormatInt(row.PromptTokens, 10), strconv.FormatInt(row.CompletionTokens, 10), strconv.FormatInt(row.Tokens(), 10),
 			strconv.FormatFloat(row.Cost, 'f', 6, 64), strconv.FormatFloat(row.AvgLatencyMs, 'f', 1, 64)})
@@ -348,7 +348,7 @@ func (h *H) export(w http.ResponseWriter, r *http.Request) {
 
 // csvSafe neutralizes values that spreadsheet apps would evaluate as formulas.
 func csvSafe(s string) string {
-	if s != "" && strings.ContainsRune("=+-@\t\r", rune(s[0])) {
+	if t := strings.TrimLeft(s, " "); t != "" && strings.ContainsRune("=+-@\t\r", rune(t[0])) {
 		return "'" + s
 	}
 	return s

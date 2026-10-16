@@ -237,7 +237,11 @@ func (h *H) create(w http.ResponseWriter, r *http.Request) {
 	if p.User != nil {
 		k.UserID = &p.User.ID
 	}
-	if err := h.bind(r, p, &k); err != nil {
+	err := h.bind(r, p, &k)
+	if err == nil {
+		err = p.CheckKeyEdit(nil, &k)
+	}
+	if err != nil {
 		fd := h.form(r.Context(), p, k, true)
 		fd.Error = err.Error()
 		h.d.Partial(w, r, 422, area, "key-form", fd)
@@ -292,7 +296,11 @@ func (h *H) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	before := k
-	if err := h.bind(r, p, &k); err != nil {
+	err := h.bind(r, p, &k)
+	if err == nil {
+		err = p.CheckKeyEdit(&before, &k)
+	}
+	if err != nil {
 		fd := h.form(r.Context(), p, k, false)
 		fd.Error = err.Error()
 		h.d.Partial(w, r, 422, area, "key-form", fd)
@@ -329,8 +337,12 @@ func (h *H) regenerate(w http.ResponseWriter, r *http.Request) {
 
 func (h *H) setBlocked(blocked bool) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		k, _, ok := h.load(w, r, true)
+		k, p, ok := h.load(w, r, true)
 		if !ok {
+			return
+		}
+		if !blocked && k.Blocked && !p.CanUnblockKey(k) {
+			ui.Fail(w, 403, "Only an admin can unblock this key.")
 			return
 		}
 		if err := h.d.Store.SetKeyBlocked(r.Context(), k.ID, blocked); err != nil {

@@ -2,8 +2,9 @@
 package session
 
 import (
+	"fmt"
+	"net"
 	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -41,12 +42,7 @@ func (h *H) page(w http.ResponseWriter, status int, title string, data any) {
 		Version: h.d.R.Version, Features: h.d.Features})
 }
 
-func safeNext(next string) string {
-	if next == "" || !strings.HasPrefix(next, "/ui") || strings.HasPrefix(next, "//") {
-		return "/ui"
-	}
-	return next
-}
+func safeNext(next string) string { return ui.SafeNext(next) }
 
 func (h *H) loginPage(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(ui.SessionCookie); err == nil {
@@ -55,18 +51,43 @@ func (h *H) loginPage(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	h.page(w, 200, "Sign in", loginData{Next: r.URL.Query().Get("next"), Tab: "password", Error: r.URL.Query().Get("error")})
+	h.page(w, 200, "Sign in", loginData{Next: r.URL.Query().Get("next"), Tab: "password", Error: loginErrors[r.URL.Query().Get("error")]})
+}
+
+// loginErrors maps ?error= codes to fixed messages so links can't put arbitrary text on the page.
+var loginErrors = map[string]string{
+	"invite": "That invite link is invalid or has expired.",
 }
 
 func (h *H) login(w http.ResponseWriter, r *http.Request) {
 	_ = r.ParseForm()
 	next := safeNext(r.FormValue("next"))
 	data := loginData{Next: next, Email: ui.FormStr(r, "email"), Tab: "password"}
+	if crossSite(r, h.d.Cfg.BaseURL) {
+		data.Error = "Sign-in requests must come from this site."
+		h.page(w, http.StatusForbidden, "Sign in", data)
+		return
+	}
+	mk := ui.FormStr(r, "master_key")
+	isMaster := mk != "" || r.FormValue("tab") == "master"
+	ipKey, acctKey := "ip:"+clientIP(r), "user:"+strings.ToLower(data.Email)
+	if isMaster {
+		acctKey = "master"
+	}
+	if wait := signIn.blocked(map[string]int{ipKey: maxFailsPerIP, acctKey: maxFailsPerAccount}); wait > 0 {
+		if isMaster {
+			data.Tab = "master"
+		}
+		data.Error = fmt.Sprintf("Too many failed sign-in attempts. Try again in %d minutes.", int(wait.Minutes())+1)
+		h.page(w, http.StatusTooManyRequests, "Sign in", data)
+		return
+	}
 	var userID *string
 	master := false
-	if mk := ui.FormStr(r, "master_key"); mk != "" || r.FormValue("tab") == "master" {
+	if isMaster {
 		data.Tab = "master"
 		if !h.d.Resolver.IsMaster(mk) {
+			signIn.failed(ipKey, acctKey)
 			data.Error = "That master key is not valid."
 			h.page(w, http.StatusUnauthorized, "Sign in", data)
 			return
@@ -74,7 +95,11 @@ func (h *H) login(w http.ResponseWriter, r *http.Request) {
 		master = true
 	} else {
 		u, err := h.d.Store.GetUserByEmail(r.Context(), data.Email)
+		if err != nil || u.PasswordHash == "" {
+			auth.CheckPassword(dummyHash, r.FormValue("password"))
+		}
 		if err != nil || !auth.CheckPassword(u.PasswordHash, r.FormValue("password")) {
+			signIn.failed(ipKey, acctKey)
 			data.Error = "Incorrect email or password."
 			h.page(w, http.StatusUnauthorized, "Sign in", data)
 			return
@@ -87,6 +112,7 @@ func (h *H) login(w http.ResponseWriter, r *http.Request) {
 		userID = &u.ID
 		_ = h.d.Store.TouchUserLogin(r.Context(), u.ID)
 	}
+	signIn.succeeded(acctKey)
 	if err := StartSession(w, r, h.d, userID, master); err != nil {
 		data.Error = "Could not start a session: " + err.Error()
 		h.page(w, 500, "Sign in", data)
@@ -103,19 +129,22 @@ func StartSession(w http.ResponseWriter, r *http.Request, d *ui.Deps, userID *st
 		return err
 	}
 	http.SetCookie(w, &http.Cookie{Name: ui.SessionCookie, Value: token, Path: "/", HttpOnly: true,
-		Secure: strings.HasPrefix(d.Cfg.BaseURL, "https://"), SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds())})
+		Secure: secureCookie(d, r), SameSite: http.SameSiteLaxMode, MaxAge: int(ttl.Seconds())})
 	return nil
 }
 
+// secureCookie marks the session cookie Secure when the public URL is https or the
+// request itself arrived over TLS (directly or via a TLS-terminating proxy).
+func secureCookie(d *ui.Deps, r *http.Request) bool {
+	return strings.HasPrefix(d.Cfg.BaseURL, "https://") || r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// clientIP returns the caller's address as resolved by the RealIP middleware.
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
 	}
-	host := r.RemoteAddr
-	if i := strings.LastIndex(host, ":"); i > 0 {
-		host = host[:i]
-	}
-	return host
+	return r.RemoteAddr
 }
 
 func (h *H) logout(w http.ResponseWriter, r *http.Request) {
@@ -136,7 +165,7 @@ func (h *H) invitePage(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
 	uid, err := h.d.Store.PeekInvite(r.Context(), auth.HashToken(token))
 	if err != nil {
-		http.Redirect(w, r, "/ui/login?error="+url.QueryEscape("That invite link is invalid or has expired."), http.StatusSeeOther)
+		http.Redirect(w, r, "/ui/login?error=invite", http.StatusSeeOther)
 		return
 	}
 	u, err := h.d.Store.GetUser(r.Context(), uid)
@@ -157,16 +186,29 @@ func (h *H) acceptInvite(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, _ := h.d.Store.GetUser(r.Context(), uid)
+	if crossSite(r, h.d.Cfg.BaseURL) {
+		h.page(w, http.StatusForbidden, "Accept invite", inviteData{Token: token, User: u, Error: "Requests must come from this site."})
+		return
+	}
 	if len(pw) < 8 || pw != r.FormValue("confirm") {
 		h.page(w, 422, "Accept invite", inviteData{Token: token, User: u, Error: "Passwords must match and be at least 8 characters."})
+		return
+	}
+	hash, err := auth.HashPassword(pw)
+	if err != nil {
+		h.page(w, 422, "Accept invite", inviteData{Token: token, User: u, Error: "That password can't be used (at most 72 bytes)."})
 		return
 	}
 	if _, err := h.d.Store.ConsumeInvite(r.Context(), auth.HashToken(token)); err != nil {
 		http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
 		return
 	}
-	hash, _ := auth.HashPassword(pw)
-	_ = h.d.Store.SetUserPassword(r.Context(), uid, hash)
+	if err := h.d.Store.SetUserPassword(r.Context(), uid, hash); err != nil {
+		http.Redirect(w, r, "/ui/login", http.StatusSeeOther)
+		return
+	}
+	// A password reset signs out every existing session of the account.
+	_ = h.d.Store.DeleteUserSessions(r.Context(), uid)
 	_ = h.d.Store.TouchUserLogin(r.Context(), uid)
 	if err := StartSession(w, r, h.d, &uid, false); err != nil {
 		http.Redirect(w, r, "/ui/login", http.StatusSeeOther)

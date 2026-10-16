@@ -72,8 +72,11 @@ func (s *Store) TouchUserLogin(ctx context.Context, id string) error {
 	return exec(ctx, s, `UPDATE users SET last_login_at=now() WHERE id=$1`, id)
 }
 
+// DeleteUser deletes a user and soft-deletes their keys, so the keys of an offboarded
+// (or previously blocked) user cannot keep working without an owner.
 func (s *Store) DeleteUser(ctx context.Context, id string) error {
-	return exec(ctx, s, `DELETE FROM users WHERE id=$1`, id)
+	return s.deleteOwner(ctx, `UPDATE api_keys SET deleted_at=now(), updated_at=now() WHERE user_id=$1 AND deleted_at IS NULL`,
+		`DELETE FROM users WHERE id=$1`, id)
 }
 
 func (s *Store) CountUsers(ctx context.Context) (int, error) {

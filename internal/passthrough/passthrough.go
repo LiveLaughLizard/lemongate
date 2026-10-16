@@ -4,7 +4,9 @@
 // /pt/tools/<rest> by proxying to http://10.0.0.5:9000/api/<rest>?<query> with any
 // method. The response is streamed back (flushed as it arrives) so server-sent
 // events work. Client credentials, cookies and hop-by-hop headers are never
-// forwarded; the route's credential, when set, is injected instead.
+// forwarded; the route's credential, when set, is injected instead. Responses are
+// served from the console's origin, so upstream cookies are dropped and content
+// is sandboxed (see sandbox).
 package passthrough
 
 import (
@@ -16,6 +18,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -181,13 +184,35 @@ func (p *Router) serve(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	rest := chi.URLParam(r, "*")
+	// chi matches the escaped path when the request has one (e.g. "%2F" in a
+	// segment); keep that form for the upstream instead of escaping it twice.
+	rest, escRest := chi.URLParam(r, "*"), ""
+	if r.URL.RawPath != "" {
+		escRest = rest
+		var err error
+		if rest, err = url.PathUnescape(rest); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_path", "invalid path escape")
+			return
+		}
+	} else {
+		escRest = (&url.URL{Path: rest}).EscapedPath()
+	}
 	target := *rt.target
 	target.Path = joinPath(rt.target.Path, rest)
+	target.RawPath = joinPath(rt.target.EscapedPath(), escRest)
 	if rest == "" && strings.HasSuffix(r.URL.Path, "/") && !strings.HasSuffix(target.Path, "/") {
 		target.Path += "/"
+		target.RawPath += "/"
 	}
-	target.RawPath = ""
+	// Resolve dot segments here and refuse paths that climb above the target's base
+	// path: an upstream that normalizes them would otherwise serve anything on its
+	// host with the route's credential. When cleaning makes the escaped form
+	// disagree with the decoded one, url.URL falls back to escaping Path.
+	target.Path, target.RawPath = cleanPath(target.Path), cleanPath(target.RawPath)
+	if !within(target.Path, rt.target.Path) {
+		writeError(w, http.StatusBadRequest, "invalid_request_error", "invalid_path", "path is outside this route")
+		return
+	}
 	switch {
 	case rt.target.RawQuery == "":
 		target.RawQuery = r.URL.RawQuery
@@ -197,7 +222,8 @@ func (p *Router) serve(w http.ResponseWriter, r *http.Request) {
 
 	out, err := http.NewRequestWithContext(r.Context(), r.Method, target.String(), r.Body)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "upstream_error", "bad_target", err.Error())
+		// The parse error quotes the target URL, which may carry a token in its query.
+		writeError(w, http.StatusBadGateway, "upstream_error", "bad_target", "invalid target URL")
 		return
 	}
 	if r.Body == nil || r.Body == http.NoBody {
@@ -242,15 +268,18 @@ func (p *Router) serve(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := p.client.Do(out)
 	if err != nil {
-		status := http.StatusBadGateway
-		msg := "upstream request failed: " + err.Error()
+		status, msg := http.StatusBadGateway, "upstream request failed"
 		if errors.Is(err, context.Canceled) {
-			status = 499
-			msg = "client closed request"
+			status, msg = 499, "client closed request"
 		} else if errors.Is(err, context.DeadlineExceeded) {
-			status = http.StatusGatewayTimeout
+			status, msg = http.StatusGatewayTimeout, "upstream request timed out"
 		}
 		rec.Status, rec.HTTPStatus, rec.Error = "error", status, msg
+		if status != 499 {
+			// The client gets the generic message; the log keeps the cause but not the
+			// request URL, whose query may carry a token (rec.APIBase names the host).
+			rec.Error += ": " + causeOf(err)
+		}
 		p.finish(rec, start)
 		if status != 499 {
 			writeError(w, status, "upstream_error", "upstream_unreachable", msg)
@@ -260,11 +289,14 @@ func (p *Router) serve(w http.ResponseWriter, r *http.Request) {
 	defer resp.Body.Close()
 
 	stripHop(resp.Header)
+	resp.Header.Del("Set-Cookie")
+	resp.Header.Del("Set-Cookie2")
 	for k, vs := range resp.Header {
 		for _, v := range vs {
 			w.Header().Add(k, v)
 		}
 	}
+	sandbox(w.Header())
 	w.WriteHeader(resp.StatusCode)
 	n, copyErr := copyFlush(w, resp.Body)
 	rec.HTTPStatus = resp.StatusCode
@@ -277,7 +309,7 @@ func (p *Router) serve(w http.ResponseWriter, r *http.Request) {
 		rec.Error = http.StatusText(resp.StatusCode)
 	}
 	if copyErr != nil && !errors.Is(copyErr, context.Canceled) {
-		rec.Error = "stream interrupted: " + copyErr.Error()
+		rec.Error = "stream interrupted: " + causeOf(copyErr)
 	}
 	p.finish(rec, start)
 }
@@ -328,7 +360,41 @@ func joinPath(base, rest string) string {
 	return strings.TrimRight(base, "/") + "/" + strings.TrimLeft(rest, "/")
 }
 
+// cleanPath resolves dot segments and repeated slashes, keeping a trailing slash.
+func cleanPath(p string) string {
+	c := path.Clean("/" + p)
+	if strings.HasSuffix(p, "/") && c != "/" {
+		c += "/"
+	}
+	return c
+}
+
+// within reports whether the cleaned path p is base or lies below it, comparing
+// whole segments ("/api2" is not within "/api").
+func within(p, base string) bool {
+	base = strings.TrimSuffix(path.Clean("/"+base), "/")
+	return base == "" || p == base || strings.HasPrefix(p, base+"/")
+}
+
+// causeOf returns the error text without the request URL that *url.Error quotes.
+func causeOf(err error) string {
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		return ue.Err.Error()
+	}
+	return err.Error()
+}
+
+// sandbox hardens a response served from the console's origin: upstream HTML
+// runs in an opaque origin (no access to console cookies or storage) and nothing
+// is MIME-sniffed into something executable. It replaces any upstream policy.
+func sandbox(h http.Header) {
+	h.Set("Content-Security-Policy", "sandbox")
+	h.Set("X-Content-Type-Options", "nosniff")
+}
+
 func writeError(w http.ResponseWriter, status int, typ, code, msg string) {
+	sandbox(w.Header())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": map[string]any{"message": msg, "type": typ, "code": code}})

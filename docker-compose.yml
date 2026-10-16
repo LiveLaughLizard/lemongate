@@ -28,8 +28,10 @@ services:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://lemongate:lemongate@postgres:5432/lemongate?sslmode=disable
-      LEMONGATE_MASTER_KEY: ${LEMONGATE_MASTER_KEY:-change-me-master-key}
-      LEMONGATE_SECRET_KEY: ${LEMONGATE_SECRET_KEY:-change-me-secret-key}
+      # Export these before `docker compose up`; LemonGate refuses to start without
+      # strong keys (openssl rand -hex 24 / openssl rand -hex 32).
+      LEMONGATE_MASTER_KEY: ${LEMONGATE_MASTER_KEY:-}
+      LEMONGATE_SECRET_KEY: ${LEMONGATE_SECRET_KEY:-}
       LEMONGATE_BASE_URL: ${LEMONGATE_BASE_URL:-http://localhost:4000}
       LEMONGATE_CONFIG: /etc/lemongate/lemongate.yaml
     volumes:

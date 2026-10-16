@@ -132,6 +132,12 @@ func (s *Store) DeleteUserSessions(ctx context.Context, userID string) error {
 	return err
 }
 
+// DeleteOtherUserSessions signs a user out everywhere except the session keepHash.
+func (s *Store) DeleteOtherUserSessions(ctx context.Context, userID, keepHash string) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM sessions WHERE user_id=$1 AND token_hash<>$2`, userID, keepHash)
+	return err
+}
+
 func (s *Store) PurgeExpiredSessions(ctx context.Context) error {
 	_, err := s.Pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
 	return err

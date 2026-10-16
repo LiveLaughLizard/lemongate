@@ -107,10 +107,9 @@
   function initCharts(root) { (root || document).querySelectorAll("canvas[data-chart]").forEach(function (c) { renderChart(c, false); }); }
 
   // ---- htmx wiring ----
-  document.addEventListener("DOMContentLoaded", function () {
-    syncThemeToggles();
-    initCharts();
-    if (!window.htmx) return;
+  // htmx.min.js is deferred just before this script and initializes on
+  // DOMContentLoaded, so configuring it here takes effect before it processes the page.
+  if (window.htmx) {
     htmx.config.responseHandling = [
       { code: "204", swap: false },
       { code: "[23]..", swap: true },
@@ -119,6 +118,20 @@
     ];
     htmx.config.scrollBehavior = "smooth";
     htmx.config.defaultSettleDelay = 0;
+    // No history snapshots: they would copy pages (including a freshly issued API
+    // key or invite link in the modal) into browser storage. Back/forward re-fetches
+    // the full page instead, so it must not be requested as an htmx partial.
+    htmx.config.historyCacheSize = 0;
+    htmx.config.historyRestoreAsHxRequest = false;
+  }
+  // Purge snapshots written before the cache was disabled (older htmx versions used localStorage).
+  ["sessionStorage", "localStorage"].forEach(function (s) {
+    try { window[s].removeItem("htmx-history-cache"); } catch (e) {}
+  });
+
+  document.addEventListener("DOMContentLoaded", function () {
+    syncThemeToggles();
+    initCharts();
   });
 
   document.addEventListener("htmx:load", function (e) { initCharts(e.target); syncThemeToggles(); });
@@ -138,6 +151,17 @@
   });
 
   document.addEventListener("close-modal", function () { var m = document.getElementById("modal"); if (m && m.open) m.close(); });
+
+  // Empty the modal once it has closed (after the fade-out) so secrets shown in it
+  // do not linger in the DOM. "close" does not bubble, hence the capture listener.
+  document.addEventListener("close", function (e) {
+    var m = e.target;
+    if (!m || m.id !== "modal") return;
+    setTimeout(function () {
+      var body = document.getElementById("modal-body");
+      if (!m.open && body && m.contains(body)) body.replaceChildren();
+    }, 300);
+  }, true);
 
   document.addEventListener("htmx:responseError", function (e) {
     var xhr = e.detail.xhr;

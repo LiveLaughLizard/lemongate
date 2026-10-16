@@ -19,9 +19,12 @@ type Config struct {
 	MasterKey    string
 	MetricsToken string // LEMONGATE_METRICS_TOKEN: static scrape token; forces /metrics auth
 	SecretKey    string
-	ConfigPath   string
-	DevMode      bool
-	SessionHours int
+	// SecretKeyDerived is true when LEMONGATE_SECRET_KEY was unset and the master key
+	// doubles as the encryption key (rotating the master key then breaks stored secrets).
+	SecretKeyDerived bool
+	ConfigPath       string
+	DevMode          bool
+	SessionHours     int
 
 	OIDC OIDCConfig
 	SMTP SMTPConfig
@@ -39,6 +42,9 @@ type OIDCConfig struct {
 	DefaultRole  string
 	DefaultTeam  string
 	ButtonLabel  string
+	// TrustEmail links existing accounts by email even when the provider does not
+	// assert email_verified (for directories where users cannot change their email).
+	TrustEmail bool
 }
 
 func (o OIDCConfig) Enabled() bool { return o.Issuer != "" && o.ClientID != "" }
@@ -135,6 +141,7 @@ func Load() (*Config, error) {
 			DefaultRole:  env("LEMONGATE_OIDC_DEFAULT_ROLE", "member"),
 			DefaultTeam:  env("LEMONGATE_OIDC_DEFAULT_TEAM", ""),
 			ButtonLabel:  env("LEMONGATE_OIDC_BUTTON_LABEL", "Continue with SSO"),
+			TrustEmail:   env("LEMONGATE_OIDC_TRUST_EMAIL", "") == "1",
 		},
 		SMTP: SMTPConfig{
 			Host:     env("LEMONGATE_SMTP_HOST", ""),
@@ -151,8 +158,18 @@ func Load() (*Config, error) {
 	if c.MasterKey == "" {
 		return nil, fmt.Errorf("LEMONGATE_MASTER_KEY is required")
 	}
+	if !c.DevMode {
+		if err := checkStrength("LEMONGATE_MASTER_KEY", c.MasterKey); err != nil {
+			return nil, err
+		}
+		if c.SecretKey != "" {
+			if err := checkStrength("LEMONGATE_SECRET_KEY", c.SecretKey); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if c.SecretKey == "" {
-		c.SecretKey = c.MasterKey
+		c.SecretKey, c.SecretKeyDerived = c.MasterKey, true
 	}
 	if c.ConfigPath != "" {
 		raw, err := os.ReadFile(c.ConfigPath)
@@ -169,6 +186,21 @@ func Load() (*Config, error) {
 		}
 	}
 	return c, nil
+}
+
+// minKeyLen is the shortest master/secret key accepted outside dev mode.
+const minKeyLen = 16
+
+// checkStrength rejects short keys and the placeholders from the examples, which would
+// give anyone who can reach the server admin access (and decrypt stored secrets).
+func checkStrength(name, v string) error {
+	if len(v) < minKeyLen {
+		return fmt.Errorf("%s must be at least %d characters (generate one with `openssl rand -hex 24`); set LEMONGATE_DEV=1 to allow weak keys in development", name, minKeyLen)
+	}
+	if lv := strings.ToLower(v); strings.Contains(lv, "change-me") || strings.Contains(lv, "changeme") {
+		return fmt.Errorf("%s is still a placeholder value; generate one with `openssl rand -hex 24`", name)
+	}
+	return nil
 }
 
 var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}`)

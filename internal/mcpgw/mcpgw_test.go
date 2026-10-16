@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -396,5 +397,36 @@ func TestAllowed(t *testing.T) {
 	s.Enabled = false
 	if Allowed(&auth.Principal{Role: auth.RoleAdmin}, s) {
 		t.Error("disabled server allowed")
+	}
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+func TestHeaderTransportSameOriginOnly(t *testing.T) {
+	var got string
+	base := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.Header.Get("X-Key")
+		return &http.Response{StatusCode: 200, Body: http.NoBody, Request: r}, nil
+	})
+	server, _ := url.Parse("https://MCP.example.com/mcp")
+	rt := &headerTransport{base: base, origin: origin(server), header: "X-Key", value: "s3cret"}
+	for target, want := range map[string]string{
+		"https://mcp.example.com/mcp":         "s3cret",
+		"https://mcp.example.com:443/message": "s3cret",
+		"http://mcp.example.com/mcp":          "",
+		"https://mcp.example.com:8443/mcp":    "",
+		"https://evil.example.net/mcp":        "",
+		"https://mcp.example.com.evil.net/":   "",
+	} {
+		got = ""
+		req, _ := http.NewRequest("GET", target, nil)
+		if _, err := rt.RoundTrip(req); err != nil {
+			t.Fatal(err)
+		}
+		if got != want {
+			t.Errorf("%s: header = %q, want %q", target, got, want)
+		}
 	}
 }
