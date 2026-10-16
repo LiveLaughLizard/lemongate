@@ -1,0 +1,168 @@
+{{/*
+  Shared components. Invoke with dict arguments, e.g.
+  {{template "stat" dict "Label" "Spend" "Value" (money .Spend) "Icon" "wallet" "Tone" "primary"}}
+*/}}
+
+{{/* Title block. Wrap it with actions in: <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"> */}}
+{{define "page-header"}}
+<div>
+  <div class="flex items-center gap-4">
+    {{if .Icon}}<div class="brand-gradient flex size-12 shrink-0 items-center justify-center rounded-2xl text-primary-content shadow-md">{{icon .Icon "text-2xl"}}</div>{{end}}
+    <div>
+      <h1 class="page-title">{{.Title}}</h1>
+      {{if .Sub}}<p class="page-sub mt-0.5">{{.Sub}}</p>{{end}}
+    </div>
+  </div>
+</div>
+{{end}}
+
+{{define "stat"}}
+<div class="stat-tile card-hover">
+  <div class="flex items-center justify-between gap-2">
+    <span class="label min-w-0 truncate">{{.Label}}</span>
+    {{if .Icon}}<span class="flex size-8 items-center justify-center rounded-xl {{if eq .Tone "secondary"}}bg-secondary/20 text-secondary{{else if eq .Tone "accent"}}bg-accent/15 text-accent{{else if eq .Tone "info"}}bg-info/15 text-info{{else if eq .Tone "error"}}bg-error/15 text-error{{else if eq .Tone "success"}}bg-success/15 text-success{{else}}bg-primary/25 text-base-content{{end}}">{{icon .Icon}}</span>{{end}}
+  </div>
+  <span class="value">{{.Value}}</span>
+  {{if .Hint}}<span class="text-xs opacity-60">{{.Hint}}</span>{{end}}
+</div>
+{{end}}
+
+{{define "empty"}}
+<div class="flex flex-col items-center justify-center gap-3 px-6 py-14 text-center">
+  <div class="relative">
+    <div class="absolute inset-0 rounded-full bg-primary/30 blur-xl"></div>
+    <div class="relative flex size-16 items-center justify-center rounded-2xl border border-base-300 bg-base-100 shadow-sm">{{icon (or .Icon "citrus") "text-3xl opacity-70"}}</div>
+  </div>
+  <h3 class="text-lg font-semibold">{{.Title}}</h3>
+  {{if .Body}}<p class="max-w-sm text-sm opacity-60">{{.Body}}</p>{{end}}
+</div>
+{{end}}
+
+{{/* Budget usage: dict "Spend" float "Max" *float64 "Period" string */}}
+{{define "budget"}}
+<div class="min-w-36">
+  <div class="flex items-baseline justify-between gap-2 text-xs">
+    <span class="font-semibold tabular-nums">{{money .Spend}}</span>
+    <span class="opacity-50">{{if isNil .Max}}no limit{{else}}of {{money .Max}}{{if .Period}} / {{.Period}}{{end}}{{end}}</span>
+  </div>
+  {{$p := pct .Spend .Max}}
+  {{if ge $p 0.0}}<progress class="progress {{pctClass $p}} mt-1 h-1.5 w-full" value="{{$p}}" max="100"></progress>{{end}}
+</div>
+{{end}}
+
+{{define "health-dot"}}
+<span class="inline-flex items-center gap-1.5">
+  <span class="relative flex size-2.5">
+    {{if eq . "healthy"}}<span class="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60"></span>{{end}}
+    <span class="relative inline-flex size-2.5 rounded-full {{if eq . "healthy"}}bg-success{{else if eq . "unknown"}}bg-base-content/30{{else if eq . "cooldown"}}bg-warning{{else}}bg-error{{end}}"></span>
+  </span>
+  <span class="text-xs capitalize">{{.}}</span>
+</span>
+{{end}}
+
+{{/* Model list chips: dict "Models" []string "Empty" "All models" */}}
+{{define "chips"}}
+{{if .Models}}
+  <div class="flex max-w-xs flex-wrap gap-1">
+    {{range $i, $m := .Models}}{{if lt $i 4}}<span class="badge badge-sm badge-outline font-mono">{{$m}}</span>{{end}}{{end}}
+    {{if gt (len .Models) 4}}<span class="badge badge-sm badge-ghost">+{{sub (len .Models) 4}}</span>{{end}}
+  </div>
+{{else}}<span class="badge badge-sm badge-ghost">{{or .Empty "All models"}}</span>{{end}}
+{{end}}
+
+{{/* Modal header: dict "Title" "Sub" "Icon" */}}
+{{define "modal-head"}}
+<div class="flex items-start gap-4 border-b border-base-300 px-6 py-5">
+  {{if .Icon}}<div class="brand-gradient flex size-10 shrink-0 items-center justify-center rounded-xl text-primary-content">{{icon .Icon "text-xl"}}</div>{{end}}
+  <div class="min-w-0 flex-1">
+    <h3 class="text-lg font-semibold [overflow-wrap:anywhere]">{{.Title}}</h3>
+    {{if .Sub}}<p class="text-sm opacity-60 [overflow-wrap:anywhere]">{{.Sub}}</p>{{end}}
+  </div>
+  <form method="dialog"><button class="btn btn-ghost btn-sm btn-square" aria-label="Close">{{icon "x"}}</button></form>
+</div>
+{{end}}
+
+{{/* Modal footer with submit: dict "Label" "Danger" bool */}}
+{{define "modal-actions"}}
+<div class="sticky bottom-0 flex justify-end gap-2 border-t border-base-300 bg-base-100 px-6 py-4">
+  <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').close()">Cancel</button>
+  <button type="submit" class="btn {{if .Danger}}btn-error{{else}}btn-primary{{end}}">
+    <span class="loading loading-spinner loading-sm htmx-indicator"></span>{{or .Label "Save"}}
+  </button>
+</div>
+{{end}}
+
+{{/* Inline form error: string */}}
+{{define "form-error"}}
+{{if .}}<div role="alert" class="alert alert-error alert-soft mb-4 text-sm">{{icon "circle-alert"}}<span>{{.}}</span></div>{{end}}
+{{end}}
+
+{{/* Standard field: dict "Label" "Hint" — wrap with {{define}} caller content via fieldset in pages */}}
+
+{{/* Limits fields shared by keys/users/teams/orgs: dict "MaxBudget" "BudgetPeriod" "RPM" "TPM" "Parallel" "NoParallel" */}}
+{{define "limit-fields"}}
+<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+  <fieldset class="fieldset">
+    <legend class="fieldset-legend">Max budget (USD)</legend>
+    <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.01" min="0" name="max_budget" value="{{val .MaxBudget}}" placeholder="Unlimited"></label>
+  </fieldset>
+  <fieldset class="fieldset">
+    <legend class="fieldset-legend">Budget resets</legend>
+    <select name="budget_period" class="select w-full">
+      <option value="" {{if eq .BudgetPeriod ""}}selected{{end}}>Never (lifetime)</option>
+      <option value="daily" {{if eq .BudgetPeriod "daily"}}selected{{end}}>Daily</option>
+      <option value="weekly" {{if eq .BudgetPeriod "weekly"}}selected{{end}}>Weekly</option>
+      <option value="monthly" {{if eq .BudgetPeriod "monthly"}}selected{{end}}>Monthly</option>
+    </select>
+  </fieldset>
+  <fieldset class="fieldset">
+    <legend class="fieldset-legend">Requests / minute</legend>
+    <input type="number" min="0" name="rpm_limit" value="{{val .RPM}}" class="input w-full" placeholder="Unlimited">
+  </fieldset>
+  <fieldset class="fieldset">
+    <legend class="fieldset-legend">Tokens / minute</legend>
+    <input type="number" min="0" name="tpm_limit" value="{{val .TPM}}" class="input w-full" placeholder="Unlimited">
+  </fieldset>
+  {{if not .NoParallel}}
+  <fieldset class="fieldset">
+    <legend class="fieldset-legend">Max parallel requests</legend>
+    <input type="number" min="0" name="max_parallel" value="{{val .Parallel}}" class="input w-full" placeholder="Unlimited">
+  </fieldset>
+  {{end}}
+</div>
+{{end}}
+
+{{/* Multi-select of models with search: dict "Name" "Options" []string "Selected" []string "Groups" []string */}}
+{{define "model-picker"}}
+<div x-data="{q: ''}" class="rounded-field border border-base-300 bg-base-100">
+  <label class="input input-sm w-full rounded-b-none border-0 border-b border-base-300">{{icon "search" "opacity-50"}}<input type="text" x-model="q" placeholder="Filter models…"></label>
+  <div class="max-h-48 overflow-y-auto p-2">
+    {{$sel := .Selected}}{{$name := .Name}}
+    {{range .Options}}
+      <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-base-200" x-show="!q || {{json (.)}}.toLowerCase().includes(q.toLowerCase())">
+        <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" name="{{$name}}" value="{{.}}" {{if has $sel .}}checked{{end}}>
+        <span class="font-mono text-xs">{{.}}</span>
+      </label>
+    {{end}}
+    {{range .Groups}}
+      <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1 hover:bg-base-200" x-show="!q || {{json (.)}}.toLowerCase().includes(q.toLowerCase())">
+        <input type="checkbox" class="checkbox checkbox-sm checkbox-secondary" name="{{$name}}" value="group:{{.}}" {{if has $sel (printf "group:%s" .)}}checked{{end}}>
+        <span class="badge badge-secondary badge-sm">group</span><span class="text-xs">{{.}}</span>
+      </label>
+    {{end}}
+    {{if not .Options}}<p class="p-2 text-xs opacity-60">No models configured yet.</p>{{end}}
+  </div>
+</div>
+<p class="mt-1 text-xs opacity-60">Leave empty to allow every model the owner can access.</p>
+{{end}}
+
+{{define "copy-field"}}
+<div class="join w-full">
+  <input type="text" readonly value="{{.}}" class="input join-item w-full font-mono text-sm" onclick="this.select()">
+  <button type="button" class="btn btn-primary join-item" onclick="lgCopy({{.}})">{{icon "copy"}} Copy</button>
+</div>
+{{end}}
+
+{{define "role-badge"}}
+<span class="badge badge-sm {{if eq . "admin"}}badge-primary{{else if eq . "admin_viewer"}}badge-info badge-soft{{else if eq . "team_admin"}}badge-secondary{{else}}badge-ghost{{end}}">{{roleLabel .}}</span>
+{{end}}

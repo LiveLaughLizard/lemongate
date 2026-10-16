@@ -1,0 +1,147 @@
+{{define "endusers-table"}}
+{{$p := .P}}
+{{with .Data}}
+{{if not .Users}}
+  <div class="glass-card">
+    {{if .Filtered}}{{template "empty" dict "Icon" "search-x" "Title" "No matching end users" "Body" "Try a different search or filter."}}
+    {{else}}{{template "empty" dict "Icon" "contact" "Title" "No end users yet" "Body" "Pass a \"user\" field in your requests (e.g. your customer ID) and they will show up here with their spend."}}{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>End user</th><th>Spend / budget</th><th>First seen</th><th>Last seen</th><th>Status</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Users}}
+      <tr>
+        <td>
+          <button type="button" class="group flex items-center gap-3 text-left" hx-get="/ui/end-users/{{.ID}}/usage" hx-target="#modal-body">
+            <div class="avatar avatar-placeholder"><div class="w-9 rounded-xl {{if .Blocked}}bg-error/15 text-error{{else}}bg-secondary/20 text-base-content{{end}}"><span class="text-xs font-bold">{{initials (or .Alias .ID)}}</span></div></div>
+            <div class="min-w-0">
+              <div class="font-semibold group-hover:underline">{{if .Alias}}{{.Alias}}{{else}}<span class="font-mono text-sm">{{truncate .ID 40}}</span>{{end}}</div>
+              {{if .Alias}}<div class="mono opacity-60">{{truncate .ID 48}}</div>{{end}}
+            </div>
+          </button>
+        </td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+        <td class="text-xs opacity-70" title="{{dt .FirstSeenAt}}">{{ago .FirstSeenAt}}</td>
+        <td class="text-xs" title="{{dt .LastSeenAt}}">{{ago .LastSeenAt}}</td>
+        <td>
+          {{if .Blocked}}<span class="badge badge-error badge-sm">blocked</span>
+          {{else if .OverBudget}}<span class="badge badge-warning badge-sm">over budget</span>
+          {{else}}<span class="badge badge-success badge-soft badge-sm">active</span>{{end}}
+        </td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              <li><button hx-get="/ui/end-users/{{.ID}}/usage" hx-target="#modal-body">{{icon "chart-column"}} Usage</button></li>
+              <li><a href="/ui/logs?end_user={{.ID}}">{{icon "scroll-text"}} Request logs</a></li>
+              {{if $p.IsAdmin}}
+              <li><button hx-get="/ui/end-users/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+              {{if .Blocked}}<li><button hx-post="/ui/end-users/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
+              {{else}}<li><button hx-post="/ui/end-users/{{.ID}}/block" hx-confirm="Block {{or .Alias .ID}}? Requests sent on their behalf will be rejected.">{{icon "ban"}} Block</button></li>{{end}}
+              {{if gt .Spend 0.0}}<li><button hx-post="/ui/end-users/{{.ID}}/reset-spend" hx-confirm="Reset the spend counter for {{or .Alias .ID}} to $0?">{{icon "rotate-ccw"}} Reset spend</button></li>{{end}}
+              <li><button class="text-error" hx-post="/ui/end-users/{{.ID}}/delete" hx-confirm="Delete {{or .Alias .ID}}? Their budget and alias are removed; they reappear if they send traffic again.">{{icon "trash-2"}} Delete</button></li>
+              {{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Users}} end user{{if ne (len .Users) 1}}s{{end}}{{if ge (len .Users) 1000}} (showing the first 1,000 — refine your search){{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "enduser-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/end-users"{{else}}hx-post="/ui/end-users/{{.User.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add end user") "Edit end user") "Sub" "Budgets apply to every request carrying this user identifier." "Icon" "contact"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Identifier</legend>
+      {{if .IsNew}}
+      <label class="input w-full">{{icon "fingerprint" "opacity-50"}}<input name="id" value="{{.User.ID}}" placeholder="customer-1234" required maxlength="256" class="font-mono"></label>
+      <p class="label text-xs">Must match the <code class="mono">user</code> field your application sends.</p>
+      {{else}}
+      <input value="{{.User.ID}}" class="input w-full font-mono" disabled>
+      {{end}}
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Display name</legend>
+      <input name="alias" value="{{.User.Alias}}" class="input w-full" placeholder="e.g. Acme Corp" maxlength="120">
+    </fieldset>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Max budget (USD)</legend>
+        <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.01" min="0" name="max_budget" value="{{val .User.MaxBudget}}" placeholder="Unlimited"></label>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Budget resets</legend>
+        <select name="budget_period" class="select w-full">
+          <option value="" {{if eq .User.BudgetPeriod ""}}selected{{end}}>Never (lifetime)</option>
+          <option value="daily" {{if eq .User.BudgetPeriod "daily"}}selected{{end}}>Daily</option>
+          <option value="weekly" {{if eq .User.BudgetPeriod "weekly"}}selected{{end}}>Weekly</option>
+          <option value="monthly" {{if eq .User.BudgetPeriod "monthly"}}selected{{end}}>Monthly</option>
+        </select>
+      </fieldset>
+    </div>
+    {{if not .IsNew}}
+    <div class="rounded-box border border-base-300 bg-base-200/50 p-3">
+      {{template "budget" dict "Spend" .User.Spend "Max" .User.MaxBudget "Period" .User.BudgetPeriod}}
+      {{if .User.BudgetResetAt}}<p class="mt-1 text-xs opacity-60">Resets {{ago .User.BudgetResetAt}}</p>{{end}}
+    </div>
+    {{end}}
+    <label class="flex cursor-pointer items-center justify-between gap-4 rounded-box border border-base-300 p-3">
+      <span><span class="block text-sm font-medium">Blocked</span><span class="text-xs opacity-60">Reject every request made on behalf of this end user.</span></span>
+      <input type="checkbox" name="blocked" class="toggle toggle-error" {{if .User.Blocked}}checked{{end}}>
+    </label>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Add end user") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "enduser-usage"}}
+{{with .Data}}
+<div data-modal-size="max-w-3xl">
+  {{template "modal-head" dict "Title" (or .User.Alias .User.ID) "Sub" (printf "Usage over the last %d days · first seen %s · last seen %s" .Days (ago .User.FirstSeenAt) (ago .User.LastSeenAt)) "Icon" "contact"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      {{template "stat" dict "Label" "Spend" "Value" (money .Totals.Cost) "Icon" "wallet"}}
+      {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary"}}
+      {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent"}}
+      {{template "stat" dict "Label" "Errors" "Value" (printf "%.1f%%" .Totals.ErrorRate) "Icon" "circle-alert" "Tone" "error"}}
+    </div>
+    <div class="glass-card p-4">
+      <div class="mb-3 flex items-center justify-between">
+        <h4 class="text-sm font-semibold">Daily spend</h4>
+        <div class="join">{{range list 7 30 90}}<button type="button" class="btn join-item btn-xs {{if eq . $.Data.Days}}btn-active{{end}}" hx-get="/ui/end-users/{{$.Data.User.ID}}/usage?days={{.}}" hx-target="#modal-body">{{.}}d</button>{{end}}</div>
+      </div>
+      <div class="h-52"><canvas data-chart="{{json .Chart}}"></canvas></div>
+    </div>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <div>
+        <h4 class="mb-2 text-sm font-semibold">Budget</h4>
+        {{template "budget" dict "Spend" .User.Spend "Max" .User.MaxBudget "Period" .User.BudgetPeriod}}
+        {{if .User.Blocked}}<span class="badge badge-error badge-sm mt-2">blocked</span>{{end}}
+      </div>
+      <div>
+        <h4 class="mb-2 text-sm font-semibold">Top models</h4>
+        {{if .ByModel}}
+        <ul class="flex flex-col gap-1.5 text-sm">{{range .ByModel}}<li class="flex justify-between gap-2"><span class="truncate font-mono text-xs">{{.Label}}</span><span class="tabular-nums">{{money .Cost}} <span class="text-xs opacity-50">· {{compact .Requests}} req</span></span></li>{{end}}</ul>
+        {{else}}<p class="text-sm opacity-60">No traffic in this period.</p>{{end}}
+      </div>
+    </div>
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <a href="/ui/logs?end_user={{.User.ID}}" class="btn btn-ghost gap-2">{{icon "scroll-text"}} Request logs</a>
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Done</button>
+  </div>
+</div>
+{{end}}
+{{end}}

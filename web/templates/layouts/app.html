@@ -1,0 +1,159 @@
+{{define "app"}}<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}<meta name="csrf-token" content="{{.CSRF}}"></head>
+<body class="min-h-screen" hx-boost="true" hx-headers='{"X-CSRF-Token": "{{.CSRF}}"}'>
+<div class="drawer lg:drawer-open">
+  <input id="nav-drawer" type="checkbox" class="drawer-toggle">
+  <div class="drawer-content hero-glow flex min-h-screen flex-col">
+    <header class="sticky top-0 z-30 border-b border-base-300/60 bg-base-100/70 backdrop-blur-md">
+      <div class="flex h-16 items-center gap-2 px-4 lg:px-8">
+        <label for="nav-drawer" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open navigation">{{icon "menu"}}</label>
+        <nav class="breadcrumbs hidden text-sm sm:block">
+          <ul>
+            <li><a href="/ui" class="opacity-60">{{icon "house"}}</a></li>
+            {{range .Crumbs}}<li>{{if .Href}}<a href="{{.Href}}" class="opacity-70">{{.Label}}</a>{{else}}<span>{{.Label}}</span>{{end}}</li>{{end}}
+            {{if .Title}}<li class="font-medium">{{.Title}}</li>{{end}}
+          </ul>
+        </nav>
+        <div class="ml-auto flex items-center gap-2">
+          <button type="button" class="btn btn-ghost btn-sm hidden gap-2 font-normal opacity-70 md:inline-flex" onclick="window.dispatchEvent(new CustomEvent('open-palette'))">
+            {{icon "search"}}<span>Jump to…</span><kbd class="kbd kbd-xs">Ctrl</kbd><kbd class="kbd kbd-xs">K</kbd>
+          </button>
+          <a href="/ui/playground" class="btn btn-primary btn-sm gap-2 shadow-sm">{{icon "sparkles"}}<span class="hidden sm:inline">Playground</span></a>
+          <label class="swap swap-rotate btn btn-ghost btn-sm btn-square" title="Toggle theme">
+            <input type="checkbox" class="theme-toggle" onchange="lgSetTheme(this.checked ? 'lemon-night' : 'lemon')">
+            <span class="swap-off">{{icon "sun"}}</span>
+            <span class="swap-on">{{icon "moon"}}</span>
+          </label>
+        </div>
+      </div>
+    </header>
+
+    <main id="main" class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 lg:px-8 lg:py-8">
+      {{template "content" .}}
+    </main>
+
+    <footer class="px-4 pb-6 text-center text-xs opacity-40 lg:px-8">
+      {{.Brand.AppName}} {{.Version}} · OpenAI-compatible endpoint: <code class="mono">/v1</code>
+    </footer>
+  </div>
+
+  <div class="drawer-side z-40">
+    <label for="nav-drawer" aria-label="Close navigation" class="drawer-overlay"></label>
+    <aside class="flex min-h-full w-72 flex-col border-r border-base-300/70 bg-base-100">
+      <a href="/ui" class="flex items-center gap-3 px-5 pb-4 pt-5">
+        {{template "logo" .}}
+        <div class="leading-tight">
+          <div class="brand-text text-xl font-extrabold tracking-tight">{{.Brand.AppName}}</div>
+          <div class="text-[11px] opacity-50">{{.Brand.Tagline}}</div>
+        </div>
+      </a>
+      <nav class="flex-1 overflow-y-auto px-3 pb-4">
+        {{range .Nav}}
+          {{if .Label}}<div class="nav-heading">{{.Label}}</div>{{end}}
+          <div class="flex flex-col gap-0.5">
+          {{range .Items}}
+            <a href="{{.Href}}" class="nav-link {{if eq .Key $.Section}}active{{end}}">{{icon .Icon}}<span>{{.Label}}</span></a>
+          {{end}}
+          </div>
+        {{end}}
+      </nav>
+      <div class="border-t border-base-300/70 p-3">
+        <div class="dropdown dropdown-top w-full">
+          <div tabindex="0" role="button" class="flex w-full items-center gap-3 rounded-field p-2 transition hover:bg-base-200">
+            <div class="avatar avatar-placeholder">
+              <div class="brand-gradient w-9 rounded-full text-primary-content">
+                <span class="text-xs font-bold">{{if .P.User}}{{initials .P.User.DisplayName}}{{else}}MK{{end}}</span>
+              </div>
+            </div>
+            <div class="min-w-0 flex-1 text-left">
+              <div class="truncate text-sm font-semibold">{{if .P.User}}{{.P.User.DisplayName}}{{else}}Master key{{end}}</div>
+              <div class="text-xs opacity-60">{{roleLabel .P.Role}}</div>
+            </div>
+            {{icon "chevrons-up-down" "opacity-50"}}
+          </div>
+          <ul tabindex="0" class="menu dropdown-content z-50 mb-2 w-full rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+            {{if .P.User}}<li><a href="/ui/profile">{{icon "circle-user-round"}} My profile</a></li>{{end}}
+            <li><a href="/ui/keys">{{icon "key-round"}} My API keys</a></li>
+            <li>
+              <form method="post" action="/ui/logout" hx-boost="false">
+                <input type="hidden" name="csrf" value="{{.CSRF}}">
+                <button class="flex w-full items-center gap-2 text-error">{{icon "log-out"}} Sign out</button>
+              </form>
+            </li>
+          </ul>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+{{template "modal" .}}
+{{template "confirm" .}}
+{{template "toasts" .}}
+{{template "palette" .}}
+</body>
+</html>
+{{end}}
+
+{{define "modal"}}
+<dialog id="modal" class="modal modal-bottom sm:modal-middle">
+  <div class="modal-box w-full max-w-2xl border border-base-300 p-0 shadow-2xl" id="modal-box">
+    <div id="modal-body" class="max-h-[85vh] overflow-y-auto"></div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{{end}}
+
+{{define "confirm"}}
+<dialog id="confirm-dialog" class="modal">
+  <div class="modal-box max-w-md">
+    <div class="flex gap-4">
+      <div class="flex size-11 shrink-0 items-center justify-center rounded-full bg-warning/20 text-warning">{{icon "triangle-alert" "text-xl"}}</div>
+      <div>
+        <h3 class="text-lg font-semibold">Are you sure?</h3>
+        <p class="mt-1 text-sm opacity-70" id="confirm-text"></p>
+      </div>
+    </div>
+    <div class="modal-action">
+      <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+      <button class="btn btn-error" id="confirm-ok">Confirm</button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+{{end}}
+
+{{define "toasts"}}
+<div x-data="toasts" @toast.window="push($event.detail)" class="toast toast-end toast-bottom z-[100]">
+  <template x-for="t in items" :key="t.id">
+    <div role="alert" class="alert min-w-72 max-w-md border shadow-lg" x-transition.opacity.duration.200ms
+      :class="{'alert-success': t.kind==='success', 'alert-error': t.kind==='error', 'alert-warning': t.kind==='warning', 'alert-info': t.kind==='info'}">
+      <span x-text="t.message" class="text-sm"></span>
+      <button class="btn btn-ghost btn-xs btn-square" @click="dismiss(t.id)">{{icon "x"}}</button>
+    </div>
+  </template>
+</div>
+{{end}}
+
+{{define "palette"}}
+<div x-data="palette({{json .Nav}})" @open-palette.window="show()" @keydown.window.ctrl.k.prevent="show()" @keydown.window.meta.k.prevent="show()">
+  <dialog x-ref="dlg" class="modal modal-top sm:modal-middle" @close="open=false">
+    <div class="modal-box max-w-lg p-0">
+      <label class="input input-lg w-full rounded-b-none border-0 border-b border-base-300 focus-within:outline-none">
+        {{icon "search" "opacity-50"}}
+        <input x-ref="q" x-model="q" type="text" placeholder="Jump to a page…" @keydown.down.prevent="move(1)" @keydown.up.prevent="move(-1)" @keydown.enter.prevent="go()">
+        <kbd class="kbd kbd-sm">Esc</kbd>
+      </label>
+      <ul class="menu max-h-96 w-full flex-nowrap overflow-y-auto p-2">
+        <template x-for="(it, i) in results" :key="it.Href">
+          <li><a :href="it.Href" :class="i===sel && 'menu-active'" @mouseenter="sel=i">
+            <span x-text="it.Label" class="font-medium"></span><span class="ml-auto text-xs opacity-50" x-text="it.Group"></span></a></li>
+        </template>
+        <li x-show="results.length===0" class="p-4 text-center text-sm opacity-60">No matches</li>
+      </ul>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+</div>
+{{end}}

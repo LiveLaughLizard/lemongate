@@ -1,0 +1,161 @@
+{{define "policies-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "layers" "Title" "No policies yet" "Body" "A policy bundles guardrails so keys and teams can adopt them in one click. Installing a preset creates one for you."}}
+  {{if .CanEdit}}<div class="-mt-6 flex flex-wrap justify-center gap-2 pb-10">
+    <a class="btn btn-primary btn-sm gap-2" href="/ui/guardrails?tab=presets">{{icon "library"}} Browse presets</a>
+    <button class="btn btn-ghost btn-sm gap-2 border-base-300" hx-get="/ui/guardrails/policies/new" hx-target="#modal-body">{{icon "plus"}} New policy</button>
+  </div>{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr>
+      <th>Policy</th><th>Guardrails</th><th>Used by</th><th class="text-center">Default-on</th><th class="text-center">Enabled</th><th></th>
+    </tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr id="policy-{{.Name}}" class="scroll-mt-24 target:bg-primary/10 {{if not .Enabled}}opacity-60{{end}}">
+        <td class="min-w-56">
+          <div class="flex items-center gap-3">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-xl {{if .Preset}}bg-secondary/20 text-secondary{{else}}bg-primary/25{{end}}">{{icon "layers"}}</div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-1.5">
+                <span class="font-mono font-semibold">{{.Name}}</span>
+                <button type="button" class="btn btn-ghost btn-xs btn-square opacity-50 hover:opacity-100" title="Copy name" aria-label="Copy name" onclick="lgCopy({{.Name}})">{{icon "copy"}}</button>
+                {{if .Preset}}<a href="/ui/guardrails?tab=presets#preset-{{.Preset}}" class="badge badge-secondary badge-soft badge-xs gap-1" title="Installed from a preset">{{icon "library"}}{{or .PresetTitle .Preset}}</a>{{end}}
+              </div>
+              {{if .Description}}<div class="line-clamp-1 max-w-md text-xs opacity-60" title="{{.Description}}">{{.Description}}</div>{{end}}
+            </div>
+          </div>
+        </td>
+        <td>
+          <div class="flex max-w-sm flex-wrap gap-1">
+            {{range .Chips}}
+            <span class="badge badge-sm gap-1 {{if .Missing}}badge-error badge-soft{{else if not .Enabled}}badge-ghost opacity-60{{else}}badge-ghost{{end}}" title="{{if .Missing}}Missing guardrail{{else}}{{.Kind.Label}}{{if not .Enabled}} (disabled){{end}}{{end}}">{{icon (or .Kind.Icon "shield-check") "opacity-60"}}<span class="font-mono">{{.Name}}</span></span>
+            {{end}}
+          </div>
+        </td>
+        <td class="whitespace-nowrap text-xs">
+          {{if and .Enabled .DefaultOn}}<span class="badge badge-info badge-soft badge-sm gap-1">{{icon "globe"}}all requests</span>
+          {{else if or .Refs.Keys .Refs.Teams}}
+            <div class="flex flex-col gap-0.5">
+              {{if .Refs.Keys}}<span class="inline-flex items-center gap-1">{{icon "key-round" "opacity-50"}}{{.Refs.Keys}} key{{if ne .Refs.Keys 1}}s{{end}}</span>{{end}}
+              {{if .Refs.Teams}}<span class="inline-flex items-center gap-1">{{icon "users" "opacity-50"}}{{.Refs.Teams}} team{{if ne .Refs.Teams 1}}s{{end}}</span>{{end}}
+            </div>
+          {{else}}<span class="opacity-50">on request only</span>{{end}}
+        </td>
+        <td class="text-center">
+          <input type="checkbox" class="toggle toggle-sm toggle-primary" aria-label="Default-on" {{if .DefaultOn}}checked{{end}} {{if not $.Data.CanEdit}}disabled{{end}}
+            hx-post="/ui/guardrails/policies/{{.ID}}/toggle?field=default_on" hx-trigger="change" hx-swap="none">
+        </td>
+        <td class="text-center">
+          <input type="checkbox" class="toggle toggle-sm toggle-success" aria-label="Enabled" {{if .Enabled}}checked{{end}} {{if not $.Data.CanEdit}}disabled{{end}}
+            hx-post="/ui/guardrails/policies/{{.ID}}/toggle?field=enabled" hx-trigger="change" hx-swap="none">
+        </td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              {{if $.Data.CanEdit}}<li><button hx-get="/ui/guardrails/policies/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>{{end}}
+              <li><a href="/ui/guardrails?tab=bench&amp;policy={{.Name}}">{{icon "flask-conical"}} Test bench</a></li>
+              {{if $.Data.CanEdit}}<li><button class="text-error" hx-get="/ui/guardrails/policies/{{.ID}}/delete" hx-target="#modal-body">{{icon "trash-2"}} Delete…</button></li>{{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Rows}} polic{{if eq (len .Rows) 1}}y{{else}}ies{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "policy-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/guardrails/policies"{{else}}hx-post="/ui/guardrails/policies/{{.P.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-2xl"
+  x-data="{q: '', sel: {{json .P.Guardrails}}}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New policy") "Edit policy") "Sub" "A named bundle of guardrails that keys and teams can attach, or that applies to every request." "Icon" "layers"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "form-error" .Error}}
+    {{if .P.Preset}}
+    <div role="status" class="alert alert-soft text-sm">{{icon "library"}}<span>Installed from the <span class="font-mono font-medium">{{.P.Preset}}</span> preset. Updating the preset resets its guardrail list.</span></div>
+    {{end}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.P.Name}}" class="input w-full font-mono" placeholder="e.g. support-bot" maxlength="63" required>
+        <p class="mt-1 text-xs text-base-content/60">Letters, digits, <code>-</code>, <code>_</code> and <code>.</code>. Renaming updates keys and teams.</p>
+      </fieldset>
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Description</legend>
+        <input name="description" value="{{.P.Description}}" class="input w-full" placeholder="Who should use this policy">
+      </fieldset>
+    </div>
+    <fieldset class="fieldset min-w-0">
+      <legend class="fieldset-legend">Guardrails <span class="badge badge-primary badge-sm" x-text="sel.length + ' selected'"></span></legend>
+      {{if .Guardrails}}
+      <div class="rounded-field border border-base-300 bg-base-100">
+        <label class="input input-sm w-full rounded-b-none border-0 border-b border-base-300">{{icon "search" "opacity-50"}}<input type="search" x-model="q" placeholder="Filter guardrails…" aria-label="Filter guardrails"></label>
+        <div class="flex max-h-72 flex-col gap-0.5 overflow-y-auto p-2">
+          {{range .Guardrails}}
+          {{$k := index $.Data.Kinds .Kind}}
+          <label class="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 hover:bg-base-200" x-show="!q || {{json .Name}}.toLowerCase().includes(q.toLowerCase()) || {{json .Kind}}.includes(q.toLowerCase())">
+            <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" name="guardrails" value="{{.Name}}" x-model="sel">
+            <span class="opacity-60">{{icon (or $k.Icon "shield-check")}}</span>
+            <span class="min-w-0 truncate font-mono text-sm">{{.Name}}</span>
+            <span class="ml-auto flex shrink-0 items-center gap-1">
+              {{if not .Enabled}}<span class="badge badge-warning badge-soft badge-xs">disabled</span>{{end}}
+              {{template "mode-badge" .Mode}}
+              <span class="badge badge-ghost badge-sm">{{or $k.Label .Kind}}</span>
+            </span>
+          </label>
+          {{end}}
+        </div>
+      </div>
+      {{else}}
+      <div role="alert" class="alert alert-info alert-soft text-sm">{{icon "info"}}<span>No guardrails yet. <a href="/ui/guardrails?tab=list" class="link">Create one</a> or install a preset first.</span></div>
+      {{end}}
+    </fieldset>
+    <div class="flex flex-col gap-3 sm:flex-row sm:gap-8">
+      <label class="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" name="default_on" class="toggle toggle-primary mt-0.5" {{if .P.DefaultOn}}checked{{end}}>
+        <span><span class="font-medium">Default-on</span><span class="block text-xs opacity-60">Apply to every request, for all keys.</span></span>
+      </label>
+      <label class="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" name="enabled" class="toggle toggle-success mt-0.5" {{if .P.Enabled}}checked{{end}}>
+        <span><span class="font-medium">Enabled</span><span class="block text-xs opacity-60">Disabled policies are ignored everywhere.</span></span>
+      </label>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create policy") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "policy-delete"}}
+{{with .Data}}
+<form hx-post="/ui/guardrails/policies/{{.P.ID}}/delete" hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (printf "Delete policy %s" .P.Name) "Sub" "This cannot be undone." "Icon" "trash-2"}}
+  <div class="flex flex-col gap-4 px-6 py-5 text-sm">
+    {{if or .Refs.Keys .Refs.Teams}}
+    <div role="alert" class="alert alert-warning alert-soft">{{icon "triangle-alert"}}<span>{{.Refs.Keys}} key(s) and {{.Refs.Teams}} team(s) attach this policy. They stop being checked by it.</span></div>
+    {{end}}
+    {{if .P.DefaultOn}}<p class="opacity-80">This policy is <span class="font-medium">default-on</span>: deleting it stops its guardrails from running on every request.</p>{{end}}
+    {{if .Exclusive}}
+    <label class="flex cursor-pointer items-start gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-error has-[:checked]:bg-error/5">
+      <input type="checkbox" name="with_guardrails" class="checkbox checkbox-error checkbox-sm mt-0.5" {{if .P.Preset}}checked{{end}}>
+      <span class="min-w-0">
+        <span class="font-medium">Also delete {{len .Exclusive}} guardrail{{if ne (len .Exclusive) 1}}s{{end}} used only by this policy</span>
+        <span class="mt-1 flex flex-wrap gap-1">{{range .Exclusive}}<span class="badge badge-ghost badge-sm font-mono">{{.}}</span>{{end}}</span>
+      </span>
+    </label>
+    {{end}}
+    {{if .Shared}}<p class="text-xs opacity-60">Kept because other policies use them: <span class="font-mono">{{joinc .Shared}}</span></p>{{end}}
+  </div>
+  {{template "modal-actions" dict "Label" "Delete policy" "Danger" true}}
+</form>
+{{end}}
+{{end}}

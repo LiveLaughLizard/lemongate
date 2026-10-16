@@ -1,0 +1,86 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Usage" "Sub" (or (and .Scoped "Spend, requests and tokens for your keys and teams.") "Spend, requests and tokens across the gateway, by any dimension.") "Icon" "chart-column"}}
+  <a hx-boost="false" href="/ui/usage/export.csv?{{safeURL .Params.Query}}" class="btn gap-2 shadow-sm"
+     onclick="this.href='/ui/usage/export.csv?'+new URLSearchParams(new FormData(document.getElementById('usage-filters'))).toString()">{{icon "download"}} Export CSV</a>
+</div>
+
+<form id="usage-filters" class="glass-card mb-6 flex flex-col gap-4 p-4"
+      hx-get="/ui/usage/data" hx-target="#usage-results" hx-trigger="change, keyup changed delay:500ms from:#usage-end-user, submit"
+      hx-indicator="#usage-loading"
+      hx-on::after-request="if (event.detail.successful && event.detail.elt === this) { var q = new URLSearchParams(); for (var [k, v] of new FormData(this)) { if (v !== '') q.append(k, v); } history.replaceState(history.state, '', '/ui/usage?' + q); }"
+      x-data="{preset: {{json (.Params.Preset)}}}">
+  <div class="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+    <div class="flex flex-wrap items-center gap-3">
+      <div class="join">
+        {{range .Presets}}<input class="join-item btn btn-sm" type="radio" name="days" value="{{.Value}}" aria-label="{{.Label}}" x-model="preset" {{if eq .Value $.Data.Params.Preset}}checked{{end}}>{{end}}
+      </div>
+      <div class="flex items-center gap-2" x-show="preset === 'custom'" x-cloak>
+        <label class="input input-sm w-40">{{icon "calendar" "opacity-50"}}<input type="date" name="from" value="{{inputDate .Params.From}}"></label>
+        <span class="text-xs opacity-50">to</span>
+        <label class="input input-sm w-40">{{icon "calendar" "opacity-50"}}<input type="date" name="to" value="{{inputDate .Params.To}}"></label>
+      </div>
+      <span id="usage-loading" class="loading loading-spinner loading-sm htmx-indicator"></span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="text-xs font-medium uppercase tracking-wider opacity-50">Metric</span>
+      <div class="join">
+        <input class="join-item btn btn-sm" type="radio" name="metric" value="cost" aria-label="Spend" {{if eq .Params.Metric "cost"}}checked{{end}}>
+        <input class="join-item btn btn-sm" type="radio" name="metric" value="requests" aria-label="Requests" {{if eq .Params.Metric "requests"}}checked{{end}}>
+        <input class="join-item btn btn-sm" type="radio" name="metric" value="tokens" aria-label="Tokens" {{if eq .Params.Metric "tokens"}}checked{{end}}>
+      </div>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 {{if .Users}}lg:grid-cols-5{{else}}lg:grid-cols-4{{end}}">
+    <label class="select select-sm w-full">
+      <span class="label">{{icon "boxes"}}</span>
+      <select name="model">
+        <option value="">All models</option>
+        {{range .Models}}<option value="{{.}}" {{if eq . $.Data.Params.Model}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </label>
+    <label class="select select-sm w-full">
+      <span class="label">{{icon "users"}}</span>
+      <select name="team">
+        <option value="">All teams</option>
+        {{range .Teams}}<option value="{{.ID}}" {{if eq .ID $.Data.Params.Team}}selected{{end}}>{{.Name}}</option>{{end}}
+      </select>
+    </label>
+    <label class="select select-sm w-full">
+      <span class="label">{{icon "key-round"}}</span>
+      <select name="key">
+        <option value="">All keys</option>
+        {{range .Keys}}<option value="{{.ID}}" {{if eq .ID $.Data.Params.Key}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </label>
+    {{if .Users}}
+    <label class="select select-sm w-full">
+      <span class="label">{{icon "user-round"}}</span>
+      <select name="user">
+        <option value="">All users</option>
+        {{range .Users}}<option value="{{.ID}}" {{if eq .ID $.Data.Params.User}}selected{{end}}>{{.Email}}</option>{{end}}
+      </select>
+    </label>
+    {{end}}
+    <label class="input input-sm w-full">{{icon "contact" "opacity-50"}}<input id="usage-end-user" type="search" name="end_user" value="{{.Params.EndUser}}" placeholder="End user id"></label>
+  </div>
+
+  <div class="flex flex-col gap-2 border-t border-base-300/70 pt-4 sm:flex-row sm:items-center">
+    <span class="text-xs font-medium uppercase tracking-wider opacity-50 sm:mr-2">Group by</span>
+    <div role="tablist" class="tabs tabs-box tabs-sm w-fit flex-wrap">
+      {{range .Groups}}<input type="radio" name="group" value="{{.Value}}" role="tab" class="tab" aria-label="{{.Label}}" {{if eq .Value $.Data.Params.Group}}checked{{end}}>{{end}}
+    </div>
+  </div>
+  <input type="hidden" name="sort" value="{{.Params.Sort}}">
+  <input type="hidden" name="dir" value="{{.Params.Dir}}">
+</form>
+
+<div id="usage-results" hx-get="/ui/usage/data?{{.Params.Query}}" hx-trigger="load">
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">{{range seq 4}}<div class="skeleton h-28 w-full rounded-box"></div>{{end}}</div>
+  <div class="skeleton mt-6 h-80 w-full rounded-box"></div>
+  <div class="skeleton mt-6 h-64 w-full rounded-box"></div>
+</div>
+{{end}}
+{{end}}

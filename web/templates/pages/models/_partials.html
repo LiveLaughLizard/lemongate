@@ -1,0 +1,672 @@
+{{/* Deployment status pill: depView */}}
+{{define "dep-status"}}
+{{if eq .Status "disabled"}}<span class="badge badge-ghost badge-sm gap-1">{{icon "circle-pause"}} disabled</span>
+{{else if eq .Status "cooldown"}}<span class="tooltip" data-tip="Cooling down for {{.CooldownLeft}}s after repeated failures">{{template "health-dot" "cooldown"}}</span>
+{{else if eq .Status "unhealthy"}}<span class="tooltip tooltip-right" data-tip="{{truncate .HealthError 160}}">{{template "health-dot" "unhealthy"}}</span>
+{{else}}{{template "health-dot" .Status}}{{end}}
+{{end}}
+
+{{/* Deployment table: dict "Deps" []depView "CanEdit" bool "Detail" bool */}}
+{{define "dep-table"}}
+{{$edit := .CanEdit}}{{$detail := .Detail}}
+<div class="overflow-x-auto">
+<table class="table table-sm">
+  <thead><tr class="text-[11px] uppercase tracking-wider opacity-60">
+    <th>Status</th><th>Endpoint</th><th>Weight</th><th>Limits · this minute</th><th>Latency</th><th>24h</th><th>Enabled</th><th></th>
+  </tr></thead>
+  <tbody>
+  {{range .Deps}}
+  <tr class="{{if not .Enabled}}opacity-60{{end}}">
+    <td class="whitespace-nowrap">{{template "dep-status" .}}</td>
+    <td>
+      <div class="flex items-center gap-2">
+        <span class="mono font-medium">{{.APIBase}}</span>
+        {{if .FromConfig}}<span class="badge badge-warning badge-soft badge-xs gap-1">{{icon "file-cog"}} config</span>{{end}}
+      </div>
+      <div class="mt-0.5 flex flex-wrap items-center gap-x-3 text-xs opacity-60">
+        <span class="flex items-center gap-1">{{icon "box"}}<span class="font-mono">{{.UpstreamModel}}</span></span>
+        {{if .CredentialName}}<span class="flex items-center gap-1">{{icon "lock-keyhole"}}{{deref .CredentialName}}</span>{{else if .APIKey}}<span class="flex items-center gap-1">{{icon "lock-keyhole"}}api key</span>{{end}}
+        <span class="flex items-center gap-1">{{icon "timer"}}{{.TimeoutSeconds}}s</span>
+        {{if .HealthAt}}<span title="{{dt .HealthAt}}">checked {{ago .HealthAt}}</span>{{end}}
+      </div>
+    </td>
+    <td class="tabular-nums">{{.Weight}}</td>
+    <td class="text-xs">
+      <div class="flex flex-col gap-0.5">
+        <span>{{.MinReqs}}{{if .RPMLimit}} / {{derefI .RPMLimit}}{{end}} <span class="opacity-50">rpm</span></span>
+        <span>{{compact .MinToks}}{{if .TPMLimit}} / {{compact (derefI .TPMLimit)}}{{end}} <span class="opacity-50">tpm</span></span>
+        <span>{{.InFlight}}{{if .MaxParallel}} / {{derefI .MaxParallel}}{{end}} <span class="opacity-50">in flight</span></span>
+      </div>
+    </td>
+    <td class="text-xs tabular-nums">
+      {{if gt .LatencyMs 0.0}}<div>{{num .LatencyMs}} ms <span class="opacity-50">ewma</span></div>{{else}}<div class="opacity-50">—</div>{{end}}
+      {{if .ProbeMs}}<div class="opacity-60">{{.ProbeMs}} ms probe</div>{{end}}
+    </td>
+    <td class="text-xs tabular-nums">
+      <div>{{compact .Req24}} req</div>
+      {{if .Fail24}}<div class="text-error">{{compact .Fail24}} failed</div>{{end}}
+    </td>
+    <td>
+      {{if .FromConfig}}
+        <span class="tooltip" data-tip="Defined in the config file — always on"><span class="badge badge-success badge-soft badge-sm gap-1">{{icon "lock"}} on</span></span>
+      {{else if $edit}}
+        <input type="checkbox" class="toggle toggle-sm toggle-success" {{if .Enabled}}checked hx-post="/ui/models/deployments/{{.ID}}/disable" hx-confirm="Disable this deployment? It stops receiving traffic."{{else}}hx-post="/ui/models/deployments/{{.ID}}/enable"{{end}} hx-trigger="change" aria-label="Enabled">
+      {{else}}
+        <input type="checkbox" class="toggle toggle-sm toggle-success" {{if .Enabled}}checked{{end}} disabled>
+      {{end}}
+    </td>
+    <td class="text-right">
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">{{icon "ellipsis-vertical"}}</div>
+        <ul tabindex="0" class="menu dropdown-content z-30 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+          {{if $edit}}
+          <li><button hx-post="/ui/models/deployments/{{.ID}}/check">{{icon "heart-pulse"}} Check health now</button></li>
+          {{if eq .Status "cooldown"}}<li><button hx-post="/ui/models/deployments/{{.ID}}/clear-cooldown">{{icon "snowflake"}} Clear cooldown</button></li>{{end}}
+          {{if not .FromConfig}}
+          <li><button hx-get="/ui/models/deployments/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+          {{end}}
+          <li><button hx-get="/ui/models/deployments/{{.ID}}/clone" hx-target="#modal-body">{{icon "copy-plus"}} Duplicate</button></li>
+          {{if not .FromConfig}}
+          <li><button class="text-error" hx-post="/ui/models/deployments/{{.ID}}/delete{{if $detail}}?from=detail{{end}}" hx-confirm="Remove the deployment {{.APIBase}} from {{.Name}}?">{{icon "trash-2"}} Remove</button></li>
+          {{else}}
+          <li class="menu-disabled"><span class="text-xs">{{icon "file-cog"}} Edit in the config file</span></li>
+          {{end}}
+          {{else}}
+          <li class="menu-disabled"><span class="text-xs">{{icon "eye"}} Read-only</span></li>
+          {{end}}
+        </ul>
+      </div>
+    </td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{end}}
+
+{{define "group-health"}}
+<div class="flex items-center gap-2">
+  <div class="flex -space-x-0.5">
+    {{range .Deps}}<span class="size-2.5 rounded-full ring-2 ring-base-100 {{if eq .Status "healthy"}}bg-success{{else if eq .Status "unknown"}}bg-base-content/30{{else if eq .Status "cooldown"}}bg-warning{{else if eq .Status "disabled"}}bg-base-content/15{{else}}bg-error{{end}}" title="{{.APIBase}}: {{.Status}}"></span>{{end}}
+  </div>
+  <span class="text-xs {{if eq .Status "down"}}text-error{{else if eq .Status "degraded"}}text-warning{{else}}opacity-70{{end}}">{{.Healthy}}/{{len .Deps}} {{if eq .Status "disabled"}}disabled{{else}}up{{end}}</span>
+</div>
+{{end}}
+
+{{define "mode-badge"}}
+<span class="badge badge-sm {{if eq . "chat"}}badge-primary badge-soft{{else if eq . "embedding"}}badge-secondary badge-soft{{else if eq . "rerank"}}badge-accent badge-soft{{else if eq . "audio"}}badge-info badge-soft{{else if eq . "classify"}}badge-warning badge-soft{{else}}badge-ghost{{end}}">{{.}}</span>
+{{end}}
+
+{{define "models-table"}}
+{{with .Data}}
+{{if not .Groups}}
+  <div class="glass-card">
+    {{if .Filtered}}{{template "empty" dict "Icon" "search-x" "Title" "No matching models" "Body" "Try another search or clear the filters."}}
+    {{else}}
+      {{template "empty" dict "Icon" "server" "Title" "No models yet" "Body" "Add a deployment that points at a vLLM server. Deployments with the same model name form a load-balanced group."}}
+      {{if .CanEdit}}<div class="-mt-6 flex justify-center pb-10"><button class="btn btn-primary gap-2" hx-get="/ui/models/new" hx-target="#modal-body">{{icon "plus"}} Add deployment</button></div>{{end}}
+    {{end}}
+  </div>
+{{else}}
+{{$auto := or .Filtered (le (len .Groups) 3)}}
+<div class="flex flex-col gap-3">
+{{range .Groups}}
+<div class="glass-card overflow-hidden" x-data="{open: (window.lgOpenModels||{})[{{json .Name}}] ?? {{if $auto}}true{{else}}false{{end}}}" x-effect="(window.lgOpenModels ||= {})[{{json .Name}}] = open">
+  <div class="flex flex-col gap-3 p-4 md:flex-row md:items-center">
+    <button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" @click="open=!open">
+      <span class="opacity-50 transition-transform" :class="open && 'rotate-90'">{{icon "chevron-right"}}</span>
+      <div class="flex size-10 shrink-0 items-center justify-center rounded-xl {{if eq .Status "down"}}bg-error/15 text-error{{else if eq .Status "degraded"}}bg-warning/20 text-warning{{else}}bg-primary/25{{end}}">{{if eq .Mode "embedding"}}{{icon "binary"}}{{else if eq .Mode "rerank"}}{{icon "list-ordered"}}{{else if eq .Mode "audio"}}{{icon "audio-lines"}}{{else if eq .Mode "classify"}}{{icon "shield-check"}}{{else}}{{icon "brain-circuit"}}{{end}}</div>
+      <div class="min-w-0">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="truncate font-mono text-sm font-semibold">{{.Name}}</span>
+          {{template "mode-badge" .Mode}}
+          {{if .AllConfig}}<span class="badge badge-warning badge-soft badge-xs gap-1">{{icon "file-cog"}} config</span>{{else if .AnyConfig}}<span class="badge badge-warning badge-soft badge-xs">mixed</span>{{end}}
+          {{range .Aliases}}<span class="badge badge-outline badge-xs gap-1">{{icon "at-sign"}}{{.}}</span>{{end}}
+        </div>
+        <div class="mt-0.5 truncate text-xs opacity-60">{{if .Description}}{{.Description}}{{else}}{{len .Deps}} deployment{{if ne (len .Deps) 1}}s{{end}} on {{.APIBases}} host{{if ne .APIBases 1}}s{{end}}{{end}}</div>
+      </div>
+    </button>
+    <div class="grid grid-cols-2 gap-x-6 gap-y-2 text-xs sm:grid-cols-4 md:flex md:items-center md:gap-6">
+      <div><div class="opacity-50">Health</div>{{template "group-health" .}}</div>
+      <div><div class="opacity-50">Context</div><div class="font-medium tabular-nums">{{if .ContextWindow}}{{compact (derefI .ContextWindow)}}{{else}}—{{end}}</div></div>
+      <div><div class="opacity-50">$ / 1M in · out</div><div class="font-medium tabular-nums">{{if or .InputCostPerM .OutputCostPerM}}{{money .InputCostPerM}} · {{money .OutputCostPerM}}{{else}}free{{end}}</div></div>
+      <div><div class="opacity-50">Now</div><div class="font-medium tabular-nums">{{.InFlight}} in flight · {{.MinReqs}} rpm</div></div>
+    </div>
+    <div class="flex items-center gap-1 md:ml-2">
+      <a href="/ui/models/{{.Name}}" class="btn btn-ghost btn-sm gap-1">Details {{icon "arrow-right"}}</a>
+      {{if $.Data.CanEdit}}<button class="btn btn-ghost btn-sm btn-square tooltip tooltip-left" data-tip="Add deployment to this group" hx-get="/ui/models/new?group={{.Name}}" hx-target="#modal-body">{{icon "plus"}}</button>{{end}}
+    </div>
+  </div>
+  <div x-show="open" x-cloak class="border-t border-base-300/70 bg-base-200/30">
+    {{template "dep-table" dict "Deps" .Deps "CanEdit" $.Data.CanEdit "Detail" false}}
+  </div>
+</div>
+{{end}}
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Groups}} model group{{if ne (len .Groups) 1}}s{{end}} · deployments from the config file are read-only here</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "dep-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/models/deployments"{{else}}hx-post="/ui/models/deployments/{{.Dep.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-4xl" x-data="{adv: false}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add deployment") "Edit deployment") "Sub" "A deployment is one vLLM server serving a model. Deployments that share a model name are load balanced." "Icon" "server"}}
+  <input type="hidden" name="id" value="{{.Dep.ID}}">
+  <div class="flex flex-col gap-6 px-6 py-5">
+    {{template "form-error" .Error}}
+
+    <section>
+      <h4 class="mb-3 flex items-center gap-2 text-sm font-semibold">{{icon "plug"}} Upstream</h4>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Public model name</legend>
+          <input name="name" value="{{.Dep.Name}}" class="input w-full font-mono" list="group-names" placeholder="llama-3.1-8b" required autocomplete="off">
+          <datalist id="group-names">{{range .Groups}}<option value="{{.}}">{{end}}</datalist>
+          <p class="text-xs opacity-60">What clients send as <code>model</code>. Reuse an existing name to add a replica.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">API base</legend>
+          <label class="input w-full">{{icon "link" "opacity-50"}}<input name="api_base" value="{{.Dep.APIBase}}" class="font-mono" placeholder="http://vllm-1:8000/v1" required></label>
+          <p class="text-xs opacity-60">vLLM's OpenAI-compatible root; <code>/v1</code> is added if missing.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Credential</legend>
+          <select name="credential_id" class="select w-full">
+            <option value="">None (no API key)</option>
+            {{$cid := deref .Dep.CredentialID}}
+            {{range .Credentials}}<option value="{{.ID}}" {{if eq .ID $cid}}selected{{end}}>{{.Name}} · {{.Hint}}</option>{{end}}
+          </select>
+          <p class="text-xs opacity-60">For servers started with <code>--api-key</code>. <a class="link" href="/ui/credentials" target="_blank">Manage credentials</a></p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Upstream model</legend>
+          <div class="join flex w-full min-w-0">
+            <input name="upstream_model" value="{{.Dep.UpstreamModel}}" class="input join-item w-0 min-w-0 flex-1 font-mono" placeholder="same as public name">
+            <button type="button" class="btn join-item gap-1" hx-post="/ui/models/test" hx-include="closest form" hx-target="#test-result" hx-swap="innerHTML">
+              <span class="loading loading-spinner loading-xs htmx-indicator"></span>{{icon "plug-zap"}} Test
+            </button>
+          </div>
+          <p class="text-xs opacity-60">The <code>--served-model-name</code>. Test the connection to list what the server serves.</p>
+        </fieldset>
+      </div>
+      <div id="test-result" class="mt-3"></div>
+    </section>
+
+    <section>
+      <h4 class="mb-3 flex items-center gap-2 text-sm font-semibold">{{icon "waypoints"}} Routing &amp; limits</h4>
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-3">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Mode</legend>
+          <select name="mode" class="select w-full">
+            {{$m := .Dep.Mode}}{{range .Modes}}<option value="{{.}}" {{if eq . $m}}selected{{end}}>{{title .}}</option>{{end}}
+          </select>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Weight</legend>
+          <input type="number" min="1" name="weight" value="{{.Dep.Weight}}" class="input w-full">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Timeout (s)</legend>
+          <input type="number" min="1" name="timeout_seconds" value="{{.Dep.TimeoutSeconds}}" class="input w-full">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Requests / min</legend>
+          <input type="number" min="0" name="rpm_limit" value="{{val .Dep.RPMLimit}}" class="input w-full" placeholder="Unlimited">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Tokens / min</legend>
+          <input type="number" min="0" name="tpm_limit" value="{{val .Dep.TPMLimit}}" class="input w-full" placeholder="Unlimited">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Max parallel</legend>
+          <input type="number" min="0" name="max_parallel" value="{{val .Dep.MaxParallel}}" class="input w-full" placeholder="Unlimited">
+        </fieldset>
+      </div>
+    </section>
+
+    <section>
+      <h4 class="mb-3 flex items-center gap-2 text-sm font-semibold">{{icon "receipt"}} Model info &amp; pricing</h4>
+      <div class="grid grid-cols-2 gap-4 sm:grid-cols-4">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Context window</legend>
+          <input type="number" min="0" name="context_window" value="{{val .Dep.ContextWindow}}" class="input w-full" placeholder="e.g. 8192">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Max output tokens</legend>
+          <input type="number" min="0" name="max_output_tokens" value="{{val .Dep.MaxOutputTokens}}" class="input w-full" placeholder="—">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Input $ / 1M</legend>
+          <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.0001" min="0" name="input_cost_per_m" value="{{.Dep.InputCostPerM}}"></label>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Output $ / 1M</legend>
+          <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.0001" min="0" name="output_cost_per_m" value="{{.Dep.OutputCostPerM}}"></label>
+        </fieldset>
+      </div>
+      <div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Description</legend>
+          <input name="description" value="{{.Dep.Description}}" class="input w-full" placeholder="Shown in the model hub">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Tags</legend>
+          <input name="tags" value="{{joinc .Dep.Tags}}" class="input w-full" placeholder="chat, general">
+        </fieldset>
+      </div>
+    </section>
+
+    <button type="button" class="btn btn-ghost btn-sm self-start gap-2" @click="adv=!adv">
+      <span x-show="!adv">{{icon "chevron-right"}}</span><span x-show="adv" x-cloak>{{icon "chevron-down"}}</span> Advanced
+    </button>
+    <div x-show="adv" x-cloak class="flex flex-col gap-4">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Extra headers</legend>
+        <textarea name="extra_headers" rows="3" class="textarea w-full font-mono text-xs" placeholder="X-Team: ml-platform">{{.Headers}}</textarea>
+        <p class="text-xs opacity-60">One <code>Header: value</code> per line, sent with every upstream request.</p>
+      </fieldset>
+    </div>
+
+    <label class="flex cursor-pointer items-center justify-between gap-4 rounded-box border border-base-300 p-4">
+      <div><div class="text-sm font-medium">Enabled</div><div class="text-xs opacity-60">Disabled deployments keep their settings but receive no traffic.</div></div>
+      <input type="checkbox" name="enabled" class="toggle toggle-success" {{if .Dep.Enabled}}checked{{end}}>
+    </label>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Add deployment") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "test-result"}}
+{{with .Data}}
+{{if .OK}}
+<div class="rounded-box border border-success/40 bg-success/10 p-3">
+  <div class="flex flex-wrap items-center gap-2 text-sm">{{icon "circle-check" "text-success"}}<span class="font-medium">Connected</span><span class="opacity-60">in {{.LatencyMs}} ms · <span class="mono">{{.URL}}</span></span></div>
+  {{if .Models}}
+  <div class="mt-2 text-xs opacity-70">Served models — click one to use it:</div>
+  <div class="mt-1.5 flex flex-wrap gap-1.5">
+    {{$cur := .Current}}
+    {{range .Models}}
+    <button type="button" class="badge gap-1 font-mono {{if eq . $cur}}badge-success{{else}}badge-outline hover:badge-primary{{end}} cursor-pointer" onclick="var i=this.closest('form').querySelector('[name=upstream_model]'); i.value={{.}}; this.parentNode.querySelectorAll('.badge').forEach(function(b){b.classList.remove('badge-success');b.classList.add('badge-outline')}); this.classList.add('badge-success'); this.classList.remove('badge-outline')">{{if eq . $cur}}{{icon "check"}}{{end}}{{.}}</button>
+    {{end}}
+  </div>
+  {{if and $cur (not (has .Models $cur))}}<p class="mt-2 flex items-center gap-1 text-xs text-warning">{{icon "triangle-alert"}} The server does not list <span class="font-mono">{{$cur}}</span>.</p>{{end}}
+  {{else}}<p class="mt-1 text-xs opacity-60">The server answered but listed no models.</p>{{end}}
+</div>
+{{else}}
+<div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-x"}}<div><div class="font-medium">Connection failed</div><div class="text-xs opacity-80">{{.Error}}</div>{{if .URL}}<div class="mono mt-1 opacity-60">{{.URL}}</div>{{end}}</div></div>
+{{end}}
+{{end}}
+{{end}}
+
+{{/* ---------- aliases ---------- */}}
+{{define "src-badge"}}{{if .}}<span class="badge badge-warning badge-soft badge-sm gap-1">{{icon "file-cog"}} config</span>{{else}}<span class="badge badge-ghost badge-sm gap-1">{{icon "database"}} console</span>{{end}}{{end}}
+
+{{define "aliases-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "at-sign" "Title" "No aliases" "Body" "Create an alias such as “default” or “fast” that points to a model group."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Alias</th><th></th><th>Model group</th><th>Source</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+    <tr>
+      <td><span class="flex items-center gap-2 font-mono text-sm font-semibold">{{icon "at-sign" "opacity-50"}}{{.Alias}}</span></td>
+      <td class="w-8 opacity-50">{{icon "arrow-right"}}</td>
+      <td>
+        <a href="/ui/models/{{.Target}}" class="font-mono text-sm hover:underline">{{.Target}}</a>
+        {{if .Missing}}<span class="badge badge-error badge-soft badge-xs ml-1">unknown model</span>{{end}}
+      </td>
+      <td>{{template "src-badge" .FromConfig}}{{if .Overrides}} <span class="badge badge-info badge-soft badge-xs">overrides config</span>{{end}}</td>
+      <td class="text-right">
+        {{if and $.Data.CanEdit (not .FromConfig)}}
+        <div class="flex justify-end gap-1">
+          <button class="btn btn-ghost btn-sm btn-square" hx-get="/ui/models/aliases/edit?alias={{.Alias}}" hx-target="#modal-body" aria-label="Edit">{{icon "pencil"}}</button>
+          <button class="btn btn-ghost btn-sm btn-square text-error" hx-post="/ui/models/aliases/delete" hx-vals='{"alias": {{json .Alias}}}' hx-confirm="Delete alias {{.Alias}}? Clients using it will get “model not found”." aria-label="Delete">{{icon "trash-2"}}</button>
+        </div>
+        {{else if and $.Data.CanEdit .FromConfig}}
+        <button class="btn btn-ghost btn-xs gap-1" hx-get="/ui/models/aliases/edit?alias={{.Alias}}" hx-target="#modal-body" title="Saving creates a console override">{{icon "pencil"}} Override</button>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "alias-form"}}
+{{with .Data}}
+<form hx-post="/ui/models/aliases" hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (or (and .Orig "Edit alias") "Add alias") "Sub" "Clients can use the alias anywhere a model name is accepted." "Icon" "at-sign"}}
+  <input type="hidden" name="orig" value="{{.Orig}}">
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Alias</legend>
+      <input name="alias" value="{{.Alias}}" class="input w-full font-mono" placeholder="default" required>
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Points to</legend>
+      <select name="target" class="select w-full font-mono" required>
+        <option value="">Choose a model group…</option>
+        {{$t := .Target}}{{range .Models}}<option value="{{.}}" {{if eq . $t}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+    </fieldset>
+  </div>
+  {{template "modal-actions" dict "Label" "Save alias"}}
+</form>
+{{end}}
+{{end}}
+
+{{/* ---------- access groups ---------- */}}
+{{define "groups-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "layers" "Title" "No access groups" "Body" "Group models (for example “starter” or “internal-only”) and grant the group to keys and teams in one step."}}</div>
+{{else}}
+<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Rows}}
+  <div class="glass-card card-hover flex flex-col gap-3 p-5">
+    <div class="flex items-start justify-between gap-2">
+      <div class="flex items-center gap-3">
+        <div class="flex size-9 items-center justify-center rounded-xl bg-secondary/20 text-secondary">{{icon "layers"}}</div>
+        <div>
+          <div class="font-semibold">{{.Name}}</div>
+          <div class="text-xs opacity-60">{{len .Models}} model{{if ne (len .Models) 1}}s{{end}} · {{.KeyCount}} key{{if ne .KeyCount 1}}s{{end}}</div>
+        </div>
+      </div>
+      {{template "src-badge" .FromConfig}}
+    </div>
+    {{if .Description}}<p class="text-sm opacity-70">{{.Description}}</p>{{end}}
+    <div class="flex flex-wrap gap-1">
+      {{$missing := .Missing}}
+      {{range .Models}}<a href="/ui/models/{{.}}" class="badge badge-sm font-mono {{if has $missing .}}badge-error badge-soft{{else}}badge-outline{{end}}">{{.}}</a>{{end}}
+    </div>
+    {{if $.Data.CanEdit}}
+    <div class="mt-auto flex justify-end gap-1 border-t border-base-300/70 pt-3">
+      <button class="btn btn-ghost btn-xs gap-1" hx-get="/ui/models/access-groups/edit?name={{.Name}}" hx-target="#modal-body">{{icon "pencil"}} {{if .FromConfig}}Override{{else}}Edit{{end}}</button>
+      {{if not .FromConfig}}<button class="btn btn-ghost btn-xs gap-1 text-error" hx-post="/ui/models/access-groups/delete" hx-vals='{"name": {{json .Name}}}' hx-confirm="Delete access group {{.Name}}? Keys that rely on it lose access to its models.">{{icon "trash-2"}} Delete</button>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "group-form"}}
+{{with .Data}}
+<form hx-post="/ui/models/access-groups" hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (or (and .Orig "Edit access group") "New access group") "Sub" "Grant this group on a key with “group:NAME” in its model list." "Icon" "layers"}}
+  <input type="hidden" name="orig" value="{{.Orig}}">
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Name</legend>
+      <input name="name" value="{{.Group.Name}}" class="input w-full font-mono" placeholder="starter" required>
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Description</legend>
+      <input name="description" value="{{.Group.Description}}" class="input w-full" placeholder="Models available to every new team">
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Models</legend>
+      {{template "model-picker" dict "Name" "models" "Options" .Models "Selected" .Group.Models}}
+    </fieldset>
+  </div>
+  {{template "modal-actions" dict "Label" "Save group"}}
+</form>
+{{end}}
+{{end}}
+
+{{/* ---------- fallbacks ---------- */}}
+{{define "fb-kind"}}{{if eq . "context"}}<span class="badge badge-info badge-soft badge-sm gap-1">{{icon "ruler"}} context window</span>{{else}}<span class="badge badge-secondary badge-soft badge-sm gap-1">{{icon "life-buoy"}} on failure</span>{{end}}{{end}}
+
+{{define "fb-chain"}}
+<div class="flex flex-wrap items-center gap-1.5">
+  {{$missing := .Missing}}
+  {{range $i, $t := .Targets}}
+    {{if $i}}<span class="opacity-40">{{icon "chevron-right"}}</span>{{end}}
+    <span class="badge badge-sm font-mono {{if has $missing $t}}badge-error badge-soft{{else}}badge-outline{{end}}"><span class="opacity-50">{{add $i 1}}.</span>{{$t}}</span>
+  {{end}}
+</div>
+{{end}}
+
+{{define "fallbacks-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "git-branch" "Title" "No fallbacks" "Body" "Add an ordered list of backup models so requests survive an outage or an over-long prompt."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Model</th><th>When</th><th>Then try, in order</th><th>Source</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+    <tr>
+      <td><a href="/ui/models/{{.Model}}" class="font-mono text-sm font-semibold hover:underline">{{.Model}}</a></td>
+      <td>{{template "fb-kind" .Kind}}</td>
+      <td>{{template "fb-chain" .}}</td>
+      <td>{{template "src-badge" .FromConfig}}</td>
+      <td class="text-right">
+        {{if $.Data.CanEdit}}
+        <div class="flex justify-end gap-1">
+          <button class="btn btn-ghost btn-sm btn-square" hx-get="/ui/models/fallbacks/edit?model={{.Model}}&kind={{.Kind}}" hx-target="#modal-body" aria-label="Edit">{{icon "pencil"}}</button>
+          {{if not .FromConfig}}<button class="btn btn-ghost btn-sm btn-square text-error" hx-post="/ui/models/fallbacks/delete" hx-vals='{"model": {{json .Model}}, "kind": {{json .Kind}}}' hx-confirm="Remove these fallbacks for {{.Model}}?" aria-label="Delete">{{icon "trash-2"}}</button>{{end}}
+        </div>
+        {{end}}
+      </td>
+    </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "fallback-form"}}
+{{with .Data}}
+<form hx-post="/ui/models/fallbacks" hx-target="#modal-body" data-modal-size="max-w-lg" x-data="{targets: {{json .FB.Targets}}, pick: '', model: {{json .FB.Model}}, move(i, d) { const j = i + d; if (j < 0 || j >= this.targets.length) return; const t = this.targets[i]; this.targets[i] = this.targets[j]; this.targets[j] = t; }}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add fallbacks") "Edit fallbacks") "Sub" "Targets are tried top to bottom until one succeeds." "Icon" "git-branch"}}
+  <input type="hidden" name="is_new" value="{{if .IsNew}}1{{end}}">
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Model</legend>
+      {{if .IsNew}}
+      <select name="model" class="select w-full font-mono" x-model="model" required>
+        <option value="">Choose a model group…</option>
+        {{$m := .FB.Model}}{{range .Models}}<option value="{{.}}" {{if eq . $m}}selected{{end}}>{{.}}</option>{{end}}
+      </select>
+      {{else}}
+      <input type="hidden" name="model" value="{{.FB.Model}}">
+      <div class="input w-full font-mono">{{.FB.Model}}</div>
+      {{end}}
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">When</legend>
+      {{if .IsNew}}
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <label class="flex cursor-pointer items-start gap-2 rounded-box border border-base-300 p-3"><input type="radio" name="kind" value="general" class="radio radio-sm radio-primary mt-0.5" {{if ne .FB.Kind "context"}}checked{{end}}><span><span class="block text-sm font-medium">On failure</span><span class="text-xs opacity-60">Errors, timeouts, all deployments down</span></span></label>
+        <label class="flex cursor-pointer items-start gap-2 rounded-box border border-base-300 p-3"><input type="radio" name="kind" value="context" class="radio radio-sm radio-primary mt-0.5" {{if eq .FB.Kind "context"}}checked{{end}}><span><span class="block text-sm font-medium">Prompt too long</span><span class="text-xs opacity-60">Context-length errors only</span></span></label>
+      </div>
+      {{else}}
+      <input type="hidden" name="kind" value="{{.FB.Kind}}">
+      <div>{{template "fb-kind" .FB.Kind}}</div>
+      {{end}}
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Fallback targets</legend>
+      <ol class="flex flex-col gap-1.5">
+        <template x-for="(t, i) in targets" :key="t">
+          <li class="flex items-center gap-2 rounded-field border border-base-300 bg-base-100 px-3 py-1.5">
+            <span class="w-5 text-xs opacity-50" x-text="(i + 1) + '.'"></span>
+            <span class="flex-1 font-mono text-sm" x-text="t"></span>
+            <input type="hidden" name="targets" :value="t">
+            <button type="button" class="btn btn-ghost btn-xs btn-square" @click="move(i, -1)" :disabled="i === 0" aria-label="Move up">{{icon "arrow-up"}}</button>
+            <button type="button" class="btn btn-ghost btn-xs btn-square" @click="move(i, 1)" :disabled="i === targets.length - 1" aria-label="Move down">{{icon "arrow-down"}}</button>
+            <button type="button" class="btn btn-ghost btn-xs btn-square text-error" @click="targets.splice(i, 1)" aria-label="Remove">{{icon "x"}}</button>
+          </li>
+        </template>
+        <li x-show="targets.length === 0" class="rounded-field border border-dashed border-base-300 px-3 py-3 text-center text-xs opacity-60">No targets yet — add one below.</li>
+      </ol>
+      <div class="join mt-2 w-full">
+        <select class="select join-item w-full font-mono" x-model="pick">
+          <option value="">Add a model…</option>
+          {{range .Models}}<option value="{{.}}" :disabled="targets.includes({{json .}}) || model === {{json .}}">{{.}}</option>{{end}}
+        </select>
+        <button type="button" class="btn join-item" @click="if (pick && !targets.includes(pick)) { targets.push(pick); } pick = ''">{{icon "plus"}} Add</button>
+      </div>
+    </fieldset>
+  </div>
+  {{template "modal-actions" dict "Label" "Save fallbacks"}}
+</form>
+{{end}}
+{{end}}
+
+{{/* ---------- model detail ---------- */}}
+{{define "model-detail"}}
+{{with .Data}}{{$g := .Group}}
+<div id="model-detail" hx-get="/ui/models/{{$g.Name}}?days={{.Days}}" hx-trigger="refresh-models from:body, refresh-model from:body" hx-target="#model-detail" hx-swap="outerHTML" hx-select="#model-detail" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex items-center gap-4">
+      <div class="flex size-14 items-center justify-center rounded-2xl {{if eq $g.Status "down"}}bg-error/15 text-error{{else}}brand-gradient text-primary-content{{end}} shadow-md">{{if eq $g.Mode "embedding"}}{{icon "binary" "text-2xl"}}{{else if eq $g.Mode "rerank"}}{{icon "list-ordered" "text-2xl"}}{{else if eq $g.Mode "audio"}}{{icon "audio-lines" "text-2xl"}}{{else if eq $g.Mode "classify"}}{{icon "shield-check" "text-2xl"}}{{else}}{{icon "brain-circuit" "text-2xl"}}{{end}}</div>
+      <div>
+        <h1 class="page-title flex flex-wrap items-center gap-2 font-mono">{{$g.Name}}
+          {{template "mode-badge" $g.Mode}}
+          {{if $g.AllConfig}}<span class="badge badge-warning badge-soft gap-1 font-sans">{{icon "file-cog"}} config</span>{{end}}
+        </h1>
+        <div class="mt-1 flex flex-wrap items-center gap-3 text-sm opacity-70">
+          {{template "group-health" $g}}
+          <span>· {{len $g.Deps}} deployment{{if ne (len $g.Deps) 1}}s{{end}} · routing: {{.Strategy}}</span>
+          {{if $g.Aliases}}<span>· aliases {{range $g.Aliases}}<span class="badge badge-outline badge-xs">{{.}}</span> {{end}}</span>{{end}}
+        </div>
+        {{if $g.Description}}<p class="mt-1 text-sm opacity-60">{{$g.Description}}</p>{{end}}
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="/ui/playground?model={{$g.Name}}" class="btn btn-sm gap-2">{{icon "sparkles"}} Try it</a>
+      {{if .CanEdit}}
+      <button class="btn btn-sm btn-primary gap-2" hx-get="/ui/models/new?group={{$g.Name}}" hx-target="#modal-body">{{icon "plus"}} Add deployment</button>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" (printf "Spend · %dd" .Days) "Value" (money .Totals.Cost) "Icon" "wallet"}}
+    {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%.1f%% errors" .Totals.ErrorRate)}}
+    {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent" "Hint" (printf "%s in · %s out" (compact .Totals.PromptTokens) (compact .Totals.CompletionTokens))}}
+    {{template "stat" dict "Label" "Avg latency" "Value" (printf "%s ms" (num .Totals.AvgLatencyMs)) "Icon" "timer" "Tone" "info" "Hint" (printf "%d in flight now" $g.InFlight)}}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div class="glass-card p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="font-semibold">Daily spend</h2>
+        <div class="join">{{range list 7 30 90}}<a href="/ui/models/{{$g.Name}}?days={{.}}" class="btn join-item btn-xs {{if eq . $.Data.Days}}btn-active{{end}}">{{.}}d</a>{{end}}</div>
+      </div>
+      <div class="h-56"><canvas data-chart="{{json .Chart}}"></canvas></div>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Requests &amp; failures</h2>
+      <div class="h-56"><canvas data-chart="{{json .ReqChart}}"></canvas></div>
+    </div>
+  </div>
+
+  <div class="glass-card mt-6 overflow-hidden">
+    <div class="flex items-center justify-between border-b border-base-300/70 px-5 py-4">
+      <h2 class="font-semibold">Deployments</h2>
+      <span class="text-xs opacity-60">Live counters reset each minute</span>
+    </div>
+    {{template "dep-table" dict "Deps" $g.Deps "CanEdit" .CanEdit "Detail" true}}
+  </div>
+
+  <div class="glass-card mt-6 p-5">
+    <h2 class="mb-4 font-semibold">Health history</h2>
+    <div class="flex flex-col gap-5">
+    {{range .Health}}
+      <div class="grid grid-cols-1 gap-4 lg:grid-cols-[18rem_1fr]">
+        <div>
+          <div class="flex items-center gap-2">{{template "dep-status" .Dep}}</div>
+          <div class="mono mt-1 truncate">{{.Dep.APIBase}}</div>
+          {{if .Checks}}
+          <div class="mt-2 flex gap-4 text-xs">
+            <div><div class="opacity-50">Uptime</div><div class="font-semibold tabular-nums {{if lt .Uptime 90.0}}text-warning{{end}}">{{printf "%.1f" .Uptime}}%</div></div>
+            <div><div class="opacity-50">Avg probe</div><div class="font-semibold tabular-nums">{{num .AvgMs}} ms</div></div>
+            <div><div class="opacity-50">Checks</div><div class="font-semibold tabular-nums">{{len .Checks}}</div></div>
+          </div>
+          {{end}}
+        </div>
+        <div class="min-w-0">
+          {{if .Dep.FromConfig}}
+            <p class="rounded-field bg-base-200/60 p-3 text-xs opacity-70">{{icon "info"}} Health history is kept for console-managed deployments. Config-file deployments show their latest probe only{{if .Dep.HealthAt}} — last checked {{ago .Dep.HealthAt}} in {{.Dep.ProbeMs}} ms{{end}}.</p>
+          {{else if not .Checks}}
+            <p class="rounded-field bg-base-200/60 p-3 text-xs opacity-70">No health checks recorded yet. Probes run every few seconds when health checks are enabled in Settings → Routing.</p>
+          {{else}}
+            <div class="flex h-6 items-end gap-0.5" aria-label="Recent health checks">
+              {{range .Slots}}{{if .}}<span class="h-full flex-1 rounded-sm {{if .OK}}bg-success/70{{else}}bg-error{{end}}" title="{{dt .CheckedAt}} — {{if .OK}}ok, {{.LatencyMs}} ms{{else}}{{.Error}}{{end}}"></span>{{else}}<span class="h-full flex-1 rounded-sm bg-base-content/10"></span>{{end}}{{end}}
+            </div>
+            <div class="mt-1 flex justify-between text-[10px] opacity-50"><span>last {{len .Checks}} checks · since {{dt (index .Checks 0).CheckedAt}}</span><span>now</span></div>
+            <div class="mt-2 h-24"><canvas data-chart="{{json .Chart}}"></canvas></div>
+            {{if .LastError}}<p class="mt-2 flex items-start gap-1 text-xs text-error">{{icon "circle-alert"}}<span>Last error: {{.LastError}}</span></p>{{end}}
+          {{end}}
+        </div>
+      </div>
+    {{end}}
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Model info</h2>
+      <dl class="kv">
+        <dt>Context window</dt><dd>{{if $g.ContextWindow}}{{num (derefI $g.ContextWindow)}} tokens{{else}}—{{end}}</dd>
+        <dt>Max output</dt><dd>{{if $g.MaxOutputTokens}}{{num (derefI $g.MaxOutputTokens)}} tokens{{else}}—{{end}}</dd>
+        <dt>Price per 1M tokens</dt><dd>{{money $g.InputCostPerM}} input · {{money $g.OutputCostPerM}} output</dd>
+        <dt>Tags</dt><dd>{{range $g.Tags}}<span class="badge badge-sm badge-outline mr-1">{{.}}</span>{{else}}—{{end}}</dd>
+      </dl>
+    </div>
+    <div class="glass-card p-5">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="font-semibold">Fallbacks</h2>
+        {{if .CanEdit}}<div class="dropdown dropdown-end">
+          <div tabindex="0" role="button" class="btn btn-ghost btn-xs gap-1">{{icon "pencil"}} Edit</div>
+          <ul tabindex="0" class="menu dropdown-content z-20 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+            <li><button hx-get="/ui/models/fallbacks/edit?model={{$g.Name}}&kind=general" hx-target="#modal-body">On failure</button></li>
+            <li><button hx-get="/ui/models/fallbacks/edit?model={{$g.Name}}&kind=context" hx-target="#modal-body">Prompt too long</button></li>
+          </ul>
+        </div>{{end}}
+      </div>
+      <div class="flex flex-col gap-3 text-sm">
+        <div><div class="mb-1">{{template "fb-kind" "general"}}</div>{{if .Fallbacks}}{{template "fb-chain" dict "Targets" .Fallbacks}}{{else}}<span class="text-xs opacity-50">none</span>{{end}}</div>
+        <div><div class="mb-1">{{template "fb-kind" "context"}}</div>{{if .CtxFallbacks}}{{template "fb-chain" dict "Targets" .CtxFallbacks}}{{else}}<span class="text-xs opacity-50">none</span>{{end}}</div>
+        {{if .FallbackFor}}<p class="text-xs opacity-60">Backup for: {{range .FallbackFor}}<a class="link font-mono" href="/ui/models/{{.}}">{{.}}</a> {{end}}</p>{{end}}
+      </div>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Access</h2>
+      <dl class="kv">
+        <dt>Access groups</dt><dd>{{range .AccessGroups}}<span class="badge badge-secondary badge-sm mr-1">{{.}}</span>{{else}}<span class="opacity-50">—</span>{{end}}</dd>
+        <dt>Top keys · {{.Days}}d</dt>
+        <dd>
+          {{if .TopKeys}}
+          <ul class="flex flex-col gap-1.5">{{range .TopKeys}}<li class="flex justify-between gap-2 text-xs"><a class="truncate hover:underline" href="/ui/keys/{{.Key}}">{{.Label}}</a><span class="tabular-nums opacity-70">{{compact .Requests}} req · {{money .Cost}}</span></li>{{end}}</ul>
+          {{else}}<span class="opacity-50">No traffic</span>{{end}}
+        </dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="mt-6 flex justify-end">
+    <a href="/ui/logs?model={{$g.Name}}" class="btn btn-ghost btn-sm gap-2">{{icon "scroll-text"}} View request logs {{icon "arrow-right"}}</a>
+  </div>
+</div>
+{{end}}
+{{end}}

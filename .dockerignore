@@ -1,0 +1,8 @@
+bin
+tmp
+web/node_modules
+web/static/dist
+.env*
+*.local.yaml
+PLAN.md
+.git

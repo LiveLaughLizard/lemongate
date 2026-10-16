@@ -1,0 +1,78 @@
+{{define "hub-mode-icon"}}
+{{if eq . "embedding"}}{{icon "binary" "text-xl"}}{{else if eq . "rerank"}}{{icon "list-ordered" "text-xl"}}{{else if eq . "audio"}}{{icon "audio-lines" "text-xl"}}{{else if eq . "completion"}}{{icon "text-cursor-input" "text-xl"}}{{else}}{{icon "message-square-text" "text-xl"}}{{end}}
+{{end}}
+
+{{define "hub-code"}}
+<div class="relative">
+  <button type="button" class="btn btn-xs absolute right-2 top-2 z-10 gap-1 border-base-content/10 bg-base-100/10 text-neutral-content backdrop-blur hover:bg-base-100/20" onclick="lgCopy(this.nextElementSibling.innerText)">{{icon "copy"}} Copy</button>
+  <pre class="max-h-80 overflow-auto rounded-box bg-neutral p-4 pr-20 font-mono text-xs leading-relaxed text-neutral-content">{{.}}</pre>
+</div>
+{{end}}
+
+{{define "hub-model"}}
+{{with .Data}}
+{{$m := .M}}{{$base := printf "%s/v1" .BaseURL}}
+<div data-modal-size="max-w-3xl" x-data="{tab: 'curl'}">
+  {{template "modal-head" dict "Title" $m.Name "Sub" (or $m.Description "Model details and example requests") "Icon" "boxes"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    <div class="flex flex-wrap items-center gap-2">
+      <span class="badge capitalize {{if eq $m.ModeLabel "chat"}}badge-primary{{else}}badge-secondary badge-soft{{end}}">{{$m.ModeLabel}}</span>
+      {{template "health-dot" $m.Status}}
+      <span class="text-xs opacity-60">{{$m.Healthy}} of {{$m.Replicas}} replica{{if ne $m.Replicas 1}}s{{end}} serving</span>
+      {{range $m.Tags}}<span class="badge badge-ghost badge-sm">{{.}}</span>{{end}}
+    </div>
+
+    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <div class="stat-tile p-3!"><span class="label">Context</span><span class="text-lg font-semibold tabular-nums">{{if $m.ContextWindow}}{{num (derefI $m.ContextWindow)}}{{else}}—{{end}}</span></div>
+      <div class="stat-tile p-3!"><span class="label">Max output</span><span class="text-lg font-semibold tabular-nums">{{if $m.MaxOutputTokens}}{{num (derefI $m.MaxOutputTokens)}}{{else}}—{{end}}</span></div>
+      <div class="stat-tile p-3!"><span class="label">Input / 1M</span><span class="text-lg font-semibold tabular-nums">{{money $m.InputCostPerM}}</span></div>
+      <div class="stat-tile p-3!"><span class="label">Output / 1M</span><span class="text-lg font-semibold tabular-nums">{{money $m.OutputCostPerM}}</span></div>
+    </div>
+
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Model name</div>
+      {{template "copy-field" $m.Name}}
+      {{if $m.Aliases}}<p class="mt-2 text-xs opacity-60">Also reachable as {{range $i, $a := $m.Aliases}}{{if $i}}, {{end}}<code class="mono">{{$a}}</code>{{end}}.</p>{{end}}
+    </div>
+
+    <div>
+      <div class="mb-2 flex items-center justify-between">
+        <div class="text-xs font-semibold uppercase tracking-wider opacity-60">Example request</div>
+        <div role="tablist" class="tabs tabs-box tabs-xs">
+          <button type="button" role="tab" class="tab" :class="tab==='curl' && 'tab-active'" @click="tab='curl'">curl</button>
+          <button type="button" role="tab" class="tab" :class="tab==='python' && 'tab-active'" @click="tab='python'">Python</button>
+          <button type="button" role="tab" class="tab" :class="tab==='js' && 'tab-active'" @click="tab='js'">JavaScript</button>
+        </div>
+      </div>
+      {{if eq $m.ModeLabel "embedding"}}
+        <div x-show="tab==='curl'">{{template "hub-code" (printf "curl %s/embeddings \\\n  -H \"Authorization: Bearer $LEMONGATE_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\": \"%s\", \"input\": [\"The quick brown fox\", \"jumps over the lazy dog\"]}'" $base $m.Name)}}</div>
+        <div x-show="tab==='python'" x-cloak>{{template "hub-code" (printf "from openai import OpenAI\n\nclient = OpenAI(base_url=\"%s\", api_key=\"YOUR_LEMONGATE_KEY\")\n\nresp = client.embeddings.create(\n    model=\"%s\",\n    input=[\"The quick brown fox\", \"jumps over the lazy dog\"],\n)\nprint(len(resp.data[0].embedding))" $base $m.Name)}}</div>
+        <div x-show="tab==='js'" x-cloak>{{template "hub-code" (printf "import OpenAI from \"openai\";\n\nconst client = new OpenAI({ baseURL: \"%s\", apiKey: process.env.LEMONGATE_API_KEY });\n\nconst resp = await client.embeddings.create({\n  model: \"%s\",\n  input: [\"The quick brown fox\", \"jumps over the lazy dog\"],\n});\nconsole.log(resp.data[0].embedding.length);" $base $m.Name)}}</div>
+      {{else if eq $m.ModeLabel "rerank"}}
+        <div x-show="tab==='curl'">{{template "hub-code" (printf "curl %s/rerank \\\n  -H \"Authorization: Bearer $LEMONGATE_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\": \"%s\", \"query\": \"What is the capital of France?\", \"documents\": [\"Paris is the capital of France.\", \"Berlin is in Germany.\"]}'" $base $m.Name)}}</div>
+        <div x-show="tab==='python'" x-cloak>{{template "hub-code" (printf "import requests\n\nresp = requests.post(\n    \"%s/rerank\",\n    headers={\"Authorization\": \"Bearer YOUR_LEMONGATE_KEY\"},\n    json={\n        \"model\": \"%s\",\n        \"query\": \"What is the capital of France?\",\n        \"documents\": [\"Paris is the capital of France.\", \"Berlin is in Germany.\"],\n    },\n)\nprint(resp.json()[\"results\"])" $base $m.Name)}}</div>
+        <div x-show="tab==='js'" x-cloak>{{template "hub-code" (printf "const resp = await fetch(\"%s/rerank\", {\n  method: \"POST\",\n  headers: { \"Authorization\": `Bearer ${process.env.LEMONGATE_API_KEY}`, \"Content-Type\": \"application/json\" },\n  body: JSON.stringify({\n    model: \"%s\",\n    query: \"What is the capital of France?\",\n    documents: [\"Paris is the capital of France.\", \"Berlin is in Germany.\"],\n  }),\n});\nconsole.log((await resp.json()).results);" $base $m.Name)}}</div>
+      {{else if eq $m.ModeLabel "audio"}}
+        <div x-show="tab==='curl'">{{template "hub-code" (printf "curl %s/audio/transcriptions \\\n  -H \"Authorization: Bearer $LEMONGATE_API_KEY\" \\\n  -F model=\"%s\" \\\n  -F file=\"@speech.mp3\"" $base $m.Name)}}</div>
+        <div x-show="tab==='python'" x-cloak>{{template "hub-code" (printf "from openai import OpenAI\n\nclient = OpenAI(base_url=\"%s\", api_key=\"YOUR_LEMONGATE_KEY\")\n\nwith open(\"speech.mp3\", \"rb\") as f:\n    text = client.audio.transcriptions.create(model=\"%s\", file=f)\nprint(text.text)" $base $m.Name)}}</div>
+        <div x-show="tab==='js'" x-cloak>{{template "hub-code" (printf "import fs from \"node:fs\";\nimport OpenAI from \"openai\";\n\nconst client = new OpenAI({ baseURL: \"%s\", apiKey: process.env.LEMONGATE_API_KEY });\n\nconst text = await client.audio.transcriptions.create({\n  model: \"%s\",\n  file: fs.createReadStream(\"speech.mp3\"),\n});\nconsole.log(text.text);" $base $m.Name)}}</div>
+      {{else if eq $m.ModeLabel "completion"}}
+        <div x-show="tab==='curl'">{{template "hub-code" (printf "curl %s/completions \\\n  -H \"Authorization: Bearer $LEMONGATE_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\"model\": \"%s\", \"prompt\": \"Once upon a time\", \"max_tokens\": 64}'" $base $m.Name)}}</div>
+        <div x-show="tab==='python'" x-cloak>{{template "hub-code" (printf "from openai import OpenAI\n\nclient = OpenAI(base_url=\"%s\", api_key=\"YOUR_LEMONGATE_KEY\")\n\nresp = client.completions.create(model=\"%s\", prompt=\"Once upon a time\", max_tokens=64)\nprint(resp.choices[0].text)" $base $m.Name)}}</div>
+        <div x-show="tab==='js'" x-cloak>{{template "hub-code" (printf "import OpenAI from \"openai\";\n\nconst client = new OpenAI({ baseURL: \"%s\", apiKey: process.env.LEMONGATE_API_KEY });\n\nconst resp = await client.completions.create({ model: \"%s\", prompt: \"Once upon a time\", max_tokens: 64 });\nconsole.log(resp.choices[0].text);" $base $m.Name)}}</div>
+      {{else}}
+        <div x-show="tab==='curl'">{{template "hub-code" (printf "curl %s/chat/completions \\\n  -H \"Authorization: Bearer $LEMONGATE_API_KEY\" \\\n  -H \"Content-Type: application/json\" \\\n  -d '{\n    \"model\": \"%s\",\n    \"messages\": [{\"role\": \"user\", \"content\": \"Hello!\"}]\n  }'" $base $m.Name)}}</div>
+        <div x-show="tab==='python'" x-cloak>{{template "hub-code" (printf "from openai import OpenAI\n\nclient = OpenAI(base_url=\"%s\", api_key=\"YOUR_LEMONGATE_KEY\")\n\nstream = client.chat.completions.create(\n    model=\"%s\",\n    messages=[{\"role\": \"user\", \"content\": \"Hello!\"}],\n    stream=True,\n)\nfor chunk in stream:\n    print(chunk.choices[0].delta.content or \"\", end=\"\")" $base $m.Name)}}</div>
+        <div x-show="tab==='js'" x-cloak>{{template "hub-code" (printf "import OpenAI from \"openai\";\n\nconst client = new OpenAI({ baseURL: \"%s\", apiKey: process.env.LEMONGATE_API_KEY });\n\nconst stream = await client.chat.completions.create({\n  model: \"%s\",\n  messages: [{ role: \"user\", content: \"Hello!\" }],\n  stream: true,\n});\nfor await (const chunk of stream) process.stdout.write(chunk.choices[0]?.delta?.content ?? \"\");" $base $m.Name)}}</div>
+      {{end}}
+      <p class="mt-2 text-xs opacity-60">Create a key on the <a href="/ui/keys" class="link">API keys</a> page and use it in place of the placeholder.</p>
+    </div>
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').close()">Close</button>
+    {{if or (eq $m.ModeLabel "chat") (eq $m.ModeLabel "completion")}}<a href="/ui/playground?model={{$m.Name}}" class="btn btn-primary gap-2">{{icon "sparkles"}} Try in playground</a>
+    {{else if eq $m.ModeLabel "embedding"}}<a href="/ui/playground?model={{$m.Name}}&tab=embeddings" class="btn btn-primary gap-2">{{icon "sparkles"}} Try in playground</a>{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

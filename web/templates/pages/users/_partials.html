@@ -1,0 +1,397 @@
+{{define "user-avatar"}}
+<div class="avatar avatar-placeholder">
+  <div class="w-9 rounded-full {{if .Blocked}}bg-error/15 text-error{{else if eq .Role "admin"}}brand-gradient text-primary-content{{else}}bg-base-300{{end}}">
+    <span class="text-xs font-bold">{{initials .DisplayName}}</span>
+  </div>
+</div>
+{{end}}
+
+{{define "users-table"}}
+{{$p := .P}}
+{{with .Data}}
+{{if not .Users}}
+  <div class="glass-card">{{template "empty" dict "Icon" "user-round-search" "Title" "No users found" "Body" "Try a different search, or add a user and send them an invite link."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>User</th><th>Role</th><th>Organization</th><th>Keys</th><th>Spend</th><th>Last sign-in</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Users}}
+      {{$self := eq .ID $.Data.SelfID}}
+      <tr>
+        <td>
+          <a href="/ui/users/{{.ID}}" class="group flex items-center gap-3">
+            {{template "user-avatar" .}}
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 truncate font-semibold group-hover:underline">{{.DisplayName}}
+                {{if $self}}<span class="badge badge-ghost badge-xs">you</span>{{end}}
+                {{if .Blocked}}<span class="badge badge-error badge-xs">blocked</span>{{end}}
+              </div>
+              {{if .Name}}<div class="truncate text-xs opacity-60">{{.Email}}</div>{{end}}
+            </div>
+          </a>
+        </td>
+        <td>{{template "role-badge" .Role}}{{if .SSOSubject}} <span class="badge badge-info badge-soft badge-xs" title="Signs in with SSO">SSO</span>{{end}}</td>
+        <td class="text-sm">{{if .OrgName}}{{deref .OrgName}}{{else}}<span class="opacity-40">—</span>{{end}}</td>
+        <td class="text-sm tabular-nums"><span class="flex items-center gap-1">{{icon "key-round" "opacity-50"}}{{.KeyCount}}</span></td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+        <td class="text-xs">{{if .LastLoginAt}}{{ago .LastLoginAt}}{{else if and (eq .PasswordHash "") (not .SSOSubject)}}<span class="badge badge-warning badge-soft badge-xs">invited</span>{{else}}<span class="opacity-50">never</span>{{end}}</td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              <li><a href="/ui/users/{{.ID}}">{{icon "eye"}} View details</a></li>
+              {{if $p.IsAdmin}}
+              <li><button hx-get="/ui/users/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+              <li><button hx-post="/ui/users/{{.ID}}/invite" hx-target="#modal-body" hx-confirm="Create a new password link for {{.Email}}? Previous links stop working.">{{icon "link"}} Password reset link</button></li>
+              <li><button hx-post="/ui/users/{{.ID}}/revoke-sessions" hx-confirm="Sign {{.Email}} out of every browser session?">{{icon "log-out"}} Revoke sessions</button></li>
+              {{if not $self}}
+                {{if .Blocked}}<li><button hx-post="/ui/users/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
+                {{else}}<li><button hx-post="/ui/users/{{.ID}}/block" hx-confirm="Block {{.Email}}? They are signed out and their keys stop working.">{{icon "ban"}} Block</button></li>{{end}}
+                <li><button class="text-error" hx-post="/ui/users/{{.ID}}/delete" hx-confirm="Delete {{.Email}}? Their keys remain but lose their owner. This cannot be undone.">{{icon "trash-2"}} Delete</button></li>
+              {{end}}
+              {{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{.Total}} user{{if ne .Total 1}}s{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "user-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/users"{{else}}hx-post="/ui/users/{{.User.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-3xl">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add user") (printf "Edit %s" .User.Email)) "Sub" "Users sign in to the console and own personal API keys." "Icon" "user-round-cog"}}
+  <div class="flex flex-col gap-5 px-6 py-5" x-data="{access: {{json (.Access)}}, adv: false, role: {{json (.User.Role)}}}">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Email</legend>
+        <label class="input w-full">{{icon "mail" "opacity-50"}}<input type="email" name="email" value="{{.User.Email}}" placeholder="person@example.com" required></label>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.User.Name}}" class="input w-full" placeholder="Optional" maxlength="120">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Role</legend>
+        {{if .IsSelf}}<input type="hidden" name="role" value="{{.User.Role}}">{{end}}
+        <select {{if not .IsSelf}}name="role"{{end}} class="select w-full" x-model="role" {{if .IsSelf}}disabled{{end}}>
+          {{$r := .User.Role}}
+          {{range .Roles}}<option value="{{.Value}}" {{if eq .Value $r}}selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
+        {{if .IsSelf}}<p class="label text-xs">You can't change your own role.</p>
+        {{else}}{{range .Roles}}<p class="label text-xs" x-show="role==={{json (.Value)}}" x-cloak>{{.Hint}}</p>{{end}}{{end}}
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Organization</legend>
+        <select name="org_id" class="select w-full">
+          <option value="">No organization</option>
+          {{$oid := deref .User.OrgID}}
+          {{range .Orgs}}<option value="{{.ID}}" {{if eq .ID $oid}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </fieldset>
+    </div>
+
+    {{if .IsNew}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">How will they sign in?</legend>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <label class="flex cursor-pointer gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="access" value="invite" x-model="access" class="radio radio-sm radio-primary">
+          <span><span class="block text-sm font-medium">Invite link</span><span class="text-xs opacity-60">They choose a password (valid 7 days)</span></span>
+        </label>
+        <label class="flex cursor-pointer gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="access" value="password" x-model="access" class="radio radio-sm radio-primary">
+          <span><span class="block text-sm font-medium">Set password</span><span class="text-xs opacity-60">You share an initial password</span></span>
+        </label>
+        <label class="flex cursor-pointer gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="access" value="none" x-model="access" class="radio radio-sm radio-primary">
+          <span><span class="block text-sm font-medium">SSO only</span><span class="text-xs opacity-60">No local password</span></span>
+        </label>
+      </div>
+      <div x-show="access==='password'" x-cloak class="mt-2">
+        <label class="input w-full sm:w-1/2">{{icon "lock-keyhole" "opacity-50"}}<input type="password" name="password" placeholder="At least 8 characters" autocomplete="new-password" minlength="8"></label>
+      </div>
+    </fieldset>
+    {{end}}
+
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Default model access</legend>
+      {{template "model-picker" dict "Name" "models" "Options" .Models "Groups" .Groups "Selected" .User.Models}}
+    </fieldset>
+
+    {{template "limit-fields" dict "MaxBudget" .User.MaxBudget "BudgetPeriod" .User.BudgetPeriod "RPM" .User.RPMLimit "TPM" .User.TPMLimit "Parallel" .User.MaxParallel}}
+
+    <button type="button" class="btn btn-ghost btn-sm self-start gap-2" @click="adv=!adv">
+      <span x-show="!adv">{{icon "chevron-right"}}</span><span x-show="adv" x-cloak>{{icon "chevron-down"}}</span> Advanced
+    </button>
+    <div x-show="adv" x-cloak>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Metadata (JSON)</legend>
+        <textarea name="metadata" rows="3" class="textarea w-full font-mono text-xs" placeholder='{"department": "support"}'>{{if .User.Metadata}}{{pretty .User.Metadata}}{{end}}</textarea>
+      </fieldset>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Add user") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "user-invite"}}
+{{with .Data}}
+<div data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" .Title "Sub" (printf "Send this link to %s so they can set a password." .User.Email) "Icon" "mail-check"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "copy-field" .Link}}
+    <div role="alert" class="alert alert-info alert-soft text-sm">{{icon "clock"}}<span>The link works once and expires {{ago .Expires}} ({{dt .Expires}}). Anyone with it can sign in as this user, so share it privately.</span></div>
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <a href="/ui/users/{{.User.ID}}" class="btn btn-ghost">View user</a>
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Done</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "user-bulk"}}
+{{with .Data}}
+<form hx-post="/ui/users/bulk" hx-target="#modal-body" data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" "Bulk add users" "Sub" "Paste one user per line. Each gets a personal invite link." "Icon" "file-up"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">CSV — email, name, role</legend>
+      <textarea name="csv" rows="8" class="textarea w-full font-mono text-xs" placeholder="ada@example.com, Ada Lovelace, member&#10;grace@example.com, Grace Hopper, admin_viewer&#10;linus@example.com">{{.CSV}}</textarea>
+      <p class="label text-xs">Name and role are optional. Roles: admin, admin_viewer, member, member_viewer. A header row is ignored.</p>
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Default role</legend>
+      <select name="role" class="select w-full sm:w-1/2">
+        {{$r := .Role}}
+        {{range .Roles}}<option value="{{.Value}}" {{if eq .Value $r}}selected{{end}}>{{.Label}}</option>{{end}}
+      </select>
+    </fieldset>
+  </div>
+  {{template "modal-actions" dict "Label" "Create users"}}
+</form>
+{{end}}
+{{end}}
+
+{{define "user-bulk-result"}}
+{{with .Data}}
+<div data-modal-size="max-w-4xl">
+  {{template "modal-head" dict "Title" (printf "%d users created" .Created) "Sub" "Copy each invite link now — links are shown only once." "Icon" "party-popper"}}
+  <div class="px-6 py-5">
+    <div class="overflow-x-auto rounded-box border border-base-300">
+      <table class="table table-sm">
+        <thead><tr><th>Email</th><th>Role</th><th>Invite link</th></tr></thead>
+        <tbody>
+        {{range .Results}}
+          <tr>
+            <td class="text-sm">{{.Email}}{{if .Name}}<div class="text-xs opacity-60">{{.Name}}</div>{{end}}</td>
+            <td>{{template "role-badge" .Role}}</td>
+            <td>
+              {{if .Error}}<span class="badge badge-error badge-soft">{{.Error}}</span>
+              {{else if .Link}}<div class="flex items-center gap-2"><code class="mono max-w-xs truncate">{{.Link}}</code><button type="button" class="btn btn-ghost btn-xs" onclick="lgCopy({{.Link}})">{{icon "copy"}}</button></div>
+              {{else}}<span class="text-xs opacity-60">created (no link)</span>{{end}}
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Done</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{/* Usage block shared by the user detail and profile pages: expects showData */}}
+{{define "user-usage"}}
+<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{template "stat" dict "Label" (printf "Spend · %dd" .Days) "Value" (money .Totals.Cost) "Icon" "wallet" "Hint" (printf "%s current period" (money .User.Spend))}}
+  {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%.1f%% errors" .Totals.ErrorRate)}}
+  {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent" "Hint" (printf "%s in · %s out" (compact .Totals.PromptTokens) (compact .Totals.CompletionTokens))}}
+  {{template "stat" dict "Label" "Live" "Value" (printf "%s rpm" (num .RPM)) "Icon" "gauge" "Tone" "info" "Hint" (printf "%d in flight · %s tpm" .InFlight (compact .TPM))}}
+</div>
+<div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+  <div class="glass-card p-5 lg:col-span-2">
+    <div class="mb-4 flex items-center justify-between">
+      <h2 class="font-semibold">Daily spend</h2>
+      <div class="join">
+        {{$base := printf "/ui/users/%s" .User.ID}}{{if .Profile}}{{$base = "/ui/profile"}}{{end}}
+        {{range list 7 30 90}}<a href="{{$base}}?days={{.}}" class="btn join-item btn-xs {{if eq . $.Days}}btn-active{{end}}">{{.}}d</a>{{end}}
+      </div>
+    </div>
+    <div class="h-64"><canvas data-chart="{{json .Chart}}"></canvas></div>
+  </div>
+  <div class="glass-card p-5">
+    <h2 class="mb-4 font-semibold">Top models · {{.Days}}d</h2>
+    {{if .ByModel}}
+    <ul class="flex flex-col gap-3">
+      {{$max := (index .ByModel 0).Cost}}
+      {{range .ByModel}}
+        <li>
+          <div class="flex justify-between text-sm"><span class="font-mono text-xs">{{.Label}}</span><span class="tabular-nums">{{money .Cost}}</span></div>
+          <progress class="progress progress-primary h-1.5 w-full" value="{{if gt $max 0.0}}{{divf .Cost $max}}{{else}}0{{end}}" max="1"></progress>
+          <div class="text-[11px] opacity-50">{{compact .Requests}} requests · {{compact .Tokens}} tokens</div>
+        </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="text-sm opacity-60">No traffic in this period.</p>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "user-teams"}}
+<div class="glass-card p-5">
+  <h2 class="mb-4 flex items-center gap-2 font-semibold">{{icon "users" "opacity-60"}} Teams</h2>
+  {{if .Memberships}}
+  <ul class="flex flex-col divide-y divide-base-300">
+    {{range .Memberships}}
+    <li class="flex items-center justify-between gap-3 py-2.5">
+      <a href="/ui/teams/{{.TeamID}}" class="flex min-w-0 items-center gap-3 hover:underline">
+        <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-secondary/20 text-xs font-bold text-secondary">{{initials .TeamName}}</div>
+        <span class="truncate text-sm font-medium">{{.TeamName}}</span>
+      </a>
+      <div class="flex items-center gap-3">
+        {{if .MaxBudget}}<span class="text-xs tabular-nums opacity-70">{{money .Spend}} / {{money .MaxBudget}}</span>{{else}}<span class="text-xs tabular-nums opacity-70">{{money .Spend}}</span>{{end}}
+        {{template "role-badge" .Role}}
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="text-sm opacity-60">Not a member of any team.</p>{{end}}
+</div>
+{{end}}
+
+{{define "user-keys"}}
+<div class="glass-card p-5">
+  <div class="mb-4 flex items-center justify-between">
+    <h2 class="flex items-center gap-2 font-semibold">{{icon "key-round" "opacity-60"}} API keys</h2>
+    <a href="/ui/keys" class="btn btn-ghost btn-xs gap-1">All keys {{icon "arrow-right"}}</a>
+  </div>
+  {{if .Keys}}
+  <ul class="flex flex-col divide-y divide-base-300">
+    {{range .Keys}}
+    <li class="flex items-center justify-between gap-3 py-2.5">
+      <a href="/ui/keys/{{.ID}}" class="flex min-w-0 items-center gap-3 hover:underline">
+        <div class="flex size-8 shrink-0 items-center justify-center rounded-lg {{if .Blocked}}bg-error/15 text-error{{else if .Expired}}bg-warning/20 text-warning{{else}}bg-primary/25{{end}}">{{icon "key-round"}}</div>
+        <div class="min-w-0">
+          <div class="truncate text-sm font-medium">{{if .Alias}}{{.Alias}}{{else}}Untitled key{{end}}</div>
+          <div class="mono opacity-60">{{.KeyHint}}{{if .TeamName}} · {{deref .TeamName}}{{end}}</div>
+        </div>
+      </a>
+      <div class="text-right text-xs">
+        <div class="tabular-nums">{{money .Spend}}</div>
+        <div class="opacity-50">{{ago .LastUsedAt}}</div>
+      </div>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="text-sm opacity-60">No personal keys.</p>{{end}}
+</div>
+{{end}}
+
+{{define "user-detail"}}
+{{with .Data}}
+<div id="user-detail" hx-get="/ui/users/{{.User.ID}}?days={{.Days}}" hx-trigger="refresh-user from:body" hx-target="#user-detail" hx-swap="outerHTML" hx-select="#user-detail" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex items-center gap-4">
+      <div class="avatar avatar-placeholder">
+        <div class="w-14 rounded-2xl shadow-md {{if .User.Blocked}}bg-error/15 text-error{{else}}brand-gradient text-primary-content{{end}}"><span class="text-xl font-bold">{{initials .User.DisplayName}}</span></div>
+      </div>
+      <div>
+        <h1 class="page-title flex flex-wrap items-center gap-2">{{.User.DisplayName}}
+          {{template "role-badge" .User.Role}}
+          {{if .User.Blocked}}<span class="badge badge-error">blocked</span>{{end}}
+          {{if .IsSelf}}<span class="badge badge-ghost">you</span>{{end}}
+        </h1>
+        <div class="mt-1 flex flex-wrap items-center gap-x-3 text-sm opacity-70">
+          <span>{{.User.Email}}</span>
+          {{if .User.OrgName}}<span class="flex items-center gap-1">· {{icon "building-2"}}<a class="link" href="/ui/orgs/{{deref .User.OrgID}}">{{deref .User.OrgName}}</a></span>{{end}}
+          <span>· joined {{ago .User.CreatedAt}}</span>
+        </div>
+      </div>
+    </div>
+    {{if .IsAdmin}}
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-sm gap-2" hx-get="/ui/users/{{.User.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button>
+      <button class="btn btn-sm gap-2" hx-get="/ui/keys/new?user={{.User.ID}}" hx-target="#modal-body">{{icon "key-round"}} Create key</button>
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-sm gap-2">{{icon "shield"}} Access {{icon "chevron-down"}}</div>
+        <ul tabindex="0" class="menu dropdown-content z-20 w-60 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+          <li><button hx-post="/ui/users/{{.User.ID}}/invite" hx-target="#modal-body" hx-confirm="Create a new password link for {{.User.Email}}? Previous links stop working.">{{icon "link"}} Password reset link</button></li>
+          <li><button hx-post="/ui/users/{{.User.ID}}/revoke-sessions" hx-confirm="Sign {{.User.Email}} out of every browser session?">{{icon "log-out"}} Revoke sessions</button></li>
+          <li><button hx-post="/ui/users/{{.User.ID}}/reset-spend" hx-confirm="Reset this user's spend counter to $0?">{{icon "rotate-ccw"}} Reset spend</button></li>
+          {{if not .IsSelf}}
+          {{if .User.Blocked}}<li><button hx-post="/ui/users/{{.User.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
+          {{else}}<li><button hx-post="/ui/users/{{.User.ID}}/block" hx-confirm="Block {{.User.Email}}? They are signed out and their keys stop working.">{{icon "ban"}} Block</button></li>{{end}}
+          <li><button class="text-error" hx-post="/ui/users/{{.User.ID}}/delete?from=detail" hx-confirm="Delete {{.User.Email}}? This cannot be undone.">{{icon "trash-2"}} Delete user</button></li>
+          {{end}}
+        </ul>
+      </div>
+    </div>
+    {{end}}
+  </div>
+
+  {{template "user-usage" .}}
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Account</h2>
+      <dl class="kv">
+        <dt>Sign-in</dt>
+        <dd class="flex flex-wrap gap-1">
+          {{if .HasPassword}}<span class="badge badge-sm badge-outline">{{icon "lock-keyhole"}} password</span>{{end}}
+          {{if .User.SSOSubject}}<span class="badge badge-sm badge-info badge-soft">{{icon "shield-check"}} SSO</span>{{end}}
+          {{if .Access.PendingInvite}}<span class="badge badge-sm badge-warning badge-soft">invite pending · expires {{ago .Access.PendingInvite}}</span>{{end}}
+          {{if and (not .HasPassword) (not .User.SSOSubject) (not .Access.PendingInvite)}}<span class="text-sm opacity-60">No way to sign in yet — issue a password link.</span>{{end}}
+        </dd>
+        <dt>Last sign-in</dt><dd>{{if .User.LastLoginAt}}{{dt .User.LastLoginAt}} ({{ago .User.LastLoginAt}}){{else}}Never{{end}}</dd>
+        <dt>Active sessions</dt><dd>{{.Access.ActiveSessions}}</dd>
+      </dl>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Budget &amp; limits</h2>
+      {{template "budget" dict "Spend" .User.Spend "Max" .User.MaxBudget "Period" .User.BudgetPeriod}}
+      {{if .User.BudgetResetAt}}<p class="mt-2 text-xs opacity-60">Resets {{ago .User.BudgetResetAt}}</p>{{end}}
+      <div class="divider my-3"></div>
+      <dl class="kv">
+        <dt>Rate limits</dt>
+        <dd>{{if .User.RPMLimit}}{{num (derefI .User.RPMLimit)}} rpm{{else}}— rpm{{end}} · {{if .User.TPMLimit}}{{compact (derefI .User.TPMLimit)}} tpm{{else}}— tpm{{end}} · {{if .User.MaxParallel}}{{derefI .User.MaxParallel}} parallel{{else}}— parallel{{end}}</dd>
+      </dl>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Model access</h2>
+      {{if .Allowed}}
+        <div class="flex flex-wrap gap-1.5">{{range .Allowed}}<span class="badge badge-outline font-mono">{{.}}</span>{{end}}</div>
+      {{else if .AllModels}}<p class="text-sm">All models</p>
+      {{else}}<p class="text-sm text-warning">No models — restrictions leave nothing allowed.</p>{{end}}
+      <p class="mt-3 text-xs opacity-60">Personal keys use these defaults; team keys use the team's models.</p>
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+    {{template "user-teams" .}}
+    {{template "user-keys" .}}
+  </div>
+
+  {{if .User.Metadata}}
+  <div class="glass-card mt-6 p-5">
+    <h2 class="mb-3 font-semibold">Metadata</h2>
+    <pre class="mono overflow-x-auto rounded-field bg-base-200 p-3">{{pretty .User.Metadata}}</pre>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,13 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Organizations" "Sub" "Top-level groups of teams and users with an overall budget and model allow-list." "Icon" "building-2"}}
+  {{if .CanCreate}}
+  <button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/orgs/new" hx-target="#modal-body">{{icon "plus"}} New organization</button>
+  {{end}}
+</div>
+<div id="orgs-table" hx-get="/ui/orgs/table" hx-trigger="load, refresh-orgs from:body">
+  <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{{range seq 3}}<div class="skeleton h-48 w-full rounded-box"></div>{{end}}</div>
+</div>
+{{end}}
+{{end}}

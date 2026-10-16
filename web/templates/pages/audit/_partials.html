@@ -1,0 +1,65 @@
+{{define "audit-action"}}
+<span class="badge badge-sm {{if or (eq . "create") (eq . "restore")}}badge-success badge-soft{{else if or (eq . "delete") (eq . "purge")}}badge-error badge-soft{{else if or (eq . "block") (eq . "rotate") (eq . "reset_spend")}}badge-warning badge-soft{{else}}badge-info badge-soft{{end}}">{{title .}}</span>
+{{end}}
+
+{{define "audit-table"}}
+{{with .Data}}
+{{if not .Entries}}
+  <div class="glass-card">{{template "empty" dict "Icon" "history" "Title" "Nothing recorded" "Body" "Changes to keys, teams, users, models and settings appear here as they happen."}}</div>
+{{else}}
+<div class="glass-card divide-y divide-base-300/70 overflow-hidden">
+  {{range .Entries}}
+  <div x-data="{open: false}">
+    <button type="button" class="flex w-full items-start gap-4 px-4 py-3 text-left transition-colors hover:bg-base-200/50 sm:items-center" @click="open=!open">
+      <div class="avatar avatar-placeholder hidden sm:flex">
+        <div class="w-9 rounded-full {{if eq .ActorID "master"}}brand-gradient text-primary-content{{else}}bg-base-200{{end}}"><span class="text-xs font-bold">{{if eq .ActorID "master"}}MK{{else}}{{initials .ActorLabel}}{{end}}</span></div>
+      </div>
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          {{template "audit-action" .Action}}
+          <span class="badge badge-ghost badge-sm">{{title .EntityType}}</span>
+          <span class="truncate text-sm font-medium">{{.Summary}}</span>
+        </div>
+        <div class="mt-0.5 text-xs opacity-60">{{.ActorLabel}} · <span title="{{dt .At}}">{{ago .At}}</span>{{if .EntityID}} · <span class="mono">{{truncate .EntityID 36}}</span>{{end}}</div>
+      </div>
+      {{if .Diff}}<span class="hidden text-xs opacity-60 sm:inline">{{if .Changes}}{{.Changes}} field{{if ne .Changes 1}}s{{end}}{{end}}</span>{{end}}
+      <span class="opacity-50 transition-transform" :class="open && 'rotate-90'">{{icon "chevron-right"}}</span>
+    </button>
+    <div x-show="open" x-cloak class="bg-base-200/40 px-4 pb-4 pt-2">
+      <div class="mb-2 flex flex-wrap items-center gap-3 text-xs opacity-70">
+        <span>{{dt .At}}</span>
+        {{if .Link}}<a class="link" href="{{.Link}}">Open {{.EntityType}}</a>{{end}}
+      </div>
+      {{if .Diff}}
+      <div class="overflow-x-auto rounded-box border border-base-300 bg-base-100">
+        <table class="table table-xs">
+          <thead><tr><th class="w-48">Field</th><th>Before</th><th>After</th></tr></thead>
+          <tbody>
+          {{range .Diff}}
+            <tr class="{{if not .Changed}}opacity-50{{end}}">
+              <td class="font-mono {{if .Changed}}font-semibold{{end}}">{{if .Changed}}<span class="mr-1 inline-block size-1.5 rounded-full bg-warning align-middle"></span>{{end}}{{.Field}}</td>
+              <td class="max-w-xs break-all font-mono text-[11px] {{if and .Changed (not .Added)}}bg-error/10 text-error{{end}}">{{if .Added}}<span class="opacity-40">—</span>{{else}}{{truncate .Before 400}}{{end}}</td>
+              <td class="max-w-xs break-all font-mono text-[11px] {{if and .Changed (not .Removed)}}bg-success/10 text-success{{end}}">{{if .Removed}}<span class="opacity-40">—</span>{{else}}{{truncate .After 400}}{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}<p class="text-xs opacity-60">No field snapshot recorded for this action.</p>{{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+<div class="mt-4 flex flex-col items-center justify-between gap-3 sm:flex-row">
+  <p class="text-xs opacity-60">Showing {{.From}}–{{.To}} of {{num .Total}}</p>
+  {{if gt .Pages 1}}
+  <div class="join">
+    <button class="btn join-item btn-sm" {{if le .Page 1}}disabled{{end}} hx-get="/ui/audit/table?page={{sub .Page 1}}" hx-target="#audit-table" hx-include="#audit-filters">{{icon "chevron-left"}}</button>
+    <button class="btn join-item btn-sm pointer-events-none">Page {{.Page}} of {{.Pages}}</button>
+    <button class="btn join-item btn-sm" {{if ge .Page .Pages}}disabled{{end}} hx-get="/ui/audit/table?page={{add .Page 1}}" hx-target="#audit-table" hx-include="#audit-filters">{{icon "chevron-right"}}</button>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}

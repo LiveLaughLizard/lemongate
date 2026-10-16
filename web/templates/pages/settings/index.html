@@ -1,0 +1,29 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Settings" "Sub" "Runtime behaviour of the gateway. Changes apply immediately — no restart needed." "Icon" "settings"}}
+  {{if not .CanEdit}}<span class="badge badge-info badge-soft gap-1">{{icon "eye"}} Read-only access</span>{{end}}
+</div>
+
+<div x-data="{tab: {{json (.Tab)}}}" x-init="$watch('tab', t => history.replaceState(null, '', '?tab=' + t))" class="grid grid-cols-1 gap-6 lg:grid-cols-[14rem_1fr]">
+  <nav class="glass-card h-fit p-2 lg:sticky lg:top-24">
+    <ul class="menu w-full gap-0.5 p-0 max-lg:menu-horizontal max-lg:flex-nowrap max-lg:overflow-x-auto">
+      {{range list (list "general" "General" "sliders-horizontal") (list "routing" "Routing" "waypoints") (list "logging" "Logging" "scroll-text") (list "cache" "Cache" "database-zap") (list "alerting" "Alerting" "bell-ring") (list "branding" "Branding" "palette") (list "metrics" "Metrics" "activity") (list "environment" "Environment" "server-cog")}}
+      {{$id := index . 0}}
+      <li><a href="?tab={{$id}}" class="whitespace-nowrap" :class="tab==={{json ($id)}} && 'menu-active'" @click.prevent="tab={{json ($id)}}">{{icon (index . 2)}} {{index . 1}}</a></li>
+      {{end}}
+    </ul>
+  </nav>
+  <div class="min-w-0">
+    <div x-show="tab==='general'">{{template "settings-general" $}}</div>
+    <div x-show="tab==='routing'" x-cloak>{{template "settings-routing" $}}</div>
+    <div x-show="tab==='logging'" x-cloak>{{template "settings-logging" $}}</div>
+    <div x-show="tab==='cache'" x-cloak>{{template "settings-cache" $}}</div>
+    <div x-show="tab==='alerting'" x-cloak>{{template "settings-alerting" $}}</div>
+    <div x-show="tab==='branding'" x-cloak>{{template "settings-branding" $}}</div>
+    <div x-show="tab==='metrics'" x-cloak>{{template "settings-metrics" $}}</div>
+    <div x-show="tab==='environment'" x-cloak>{{template "settings-env" $}}</div>
+  </div>
+</div>
+{{end}}
+{{end}}

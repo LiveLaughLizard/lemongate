@@ -1,0 +1,82 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  <div class="flex items-center gap-4">
+    <div class="avatar avatar-placeholder">
+      <div class="brand-gradient w-14 rounded-2xl text-primary-content shadow-md"><span class="text-xl font-bold">{{initials .User.DisplayName}}</span></div>
+    </div>
+    <div>
+      <h1 class="page-title flex flex-wrap items-center gap-2">{{.User.DisplayName}} {{template "role-badge" .User.Role}}</h1>
+      <p class="page-sub mt-0.5">{{.User.Email}}{{if .User.OrgName}} · {{deref .User.OrgName}}{{end}}</p>
+    </div>
+  </div>
+  <a href="/ui/keys" class="btn btn-primary gap-2 shadow-sm">{{icon "key-round"}} My API keys</a>
+</div>
+
+<div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <form class="glass-card flex flex-col gap-4 p-5" hx-post="/ui/profile" hx-swap="none">
+    <h2 class="flex items-center gap-2 font-semibold">{{icon "circle-user-round" "opacity-60"}} Profile</h2>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Display name</legend>
+      <input name="name" value="{{.User.Name}}" class="input w-full" placeholder="Your name" maxlength="120">
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Email</legend>
+      <label class="input w-full">{{icon "mail" "opacity-50"}}<input value="{{.User.Email}}" disabled></label>
+      <p class="label text-xs">Ask an administrator to change your email or role.</p>
+    </fieldset>
+    <div class="flex items-center justify-between gap-3">
+      <div class="flex flex-wrap gap-1 text-xs">
+        {{if .User.SSOSubject}}<span class="badge badge-info badge-soft badge-sm">{{icon "shield-check"}} SSO linked</span>{{end}}
+        <span class="badge badge-ghost badge-sm">last sign-in {{ago .User.LastLoginAt}}</span>
+      </div>
+      <button class="btn btn-primary btn-sm"><span class="loading loading-spinner loading-xs htmx-indicator"></span>Save profile</button>
+    </div>
+  </form>
+
+  <form class="glass-card flex flex-col gap-4 p-5" hx-post="/ui/profile/password" hx-swap="none" @password-changed.window="$el.reset()" x-data>
+    <h2 class="flex items-center gap-2 font-semibold">{{icon "lock-keyhole" "opacity-60"}} {{if .HasPassword}}Change password{{else}}Set a password{{end}}</h2>
+    {{if .HasPassword}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Current password</legend>
+      <input type="password" name="current" class="input w-full" autocomplete="current-password" required>
+    </fieldset>
+    {{else}}
+    <p class="text-sm opacity-70">You don't have a local password yet{{if .User.SSOSubject}} — you sign in with SSO{{end}}. Set one to also sign in with your email.</p>
+    {{end}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">New password</legend>
+        <input type="password" name="password" class="input w-full" autocomplete="new-password" minlength="8" required placeholder="At least 8 characters">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Confirm</legend>
+        <input type="password" name="confirm" class="input w-full" autocomplete="new-password" minlength="8" required>
+      </fieldset>
+    </div>
+    <div class="flex justify-end">
+      <button class="btn btn-sm"><span class="loading loading-spinner loading-xs htmx-indicator"></span>{{if .HasPassword}}Update password{{else}}Set password{{end}}</button>
+    </div>
+  </form>
+</div>
+
+<h2 class="mb-4 mt-8 text-lg font-semibold">My usage</h2>
+{{template "user-usage" .}}
+
+<div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+  {{template "user-teams" .}}
+  {{template "user-keys" .}}
+  <div class="glass-card p-5">
+    <h2 class="mb-4 font-semibold">Budget &amp; access</h2>
+    {{template "budget" dict "Spend" .User.Spend "Max" .User.MaxBudget "Period" .User.BudgetPeriod}}
+    <div class="divider my-3"></div>
+    <dl class="kv">
+      <dt>Models</dt>
+      <dd>{{if .Allowed}}<div class="flex flex-wrap gap-1">{{range .Allowed}}<span class="badge badge-sm badge-outline font-mono">{{.}}</span>{{end}}</div>{{else if .AllModels}}All models{{else}}<span class="text-warning">None</span>{{end}}</dd>
+      <dt>Rate limits</dt>
+      <dd>{{if .User.RPMLimit}}{{num (derefI .User.RPMLimit)}} rpm{{else}}— rpm{{end}} · {{if .User.TPMLimit}}{{compact (derefI .User.TPMLimit)}} tpm{{else}}— tpm{{end}}</dd>
+    </dl>
+  </div>
+</div>
+{{end}}
+{{end}}

@@ -1,0 +1,127 @@
+{{define "content"}}
+{{$p := .P}}
+{{with .Data}}
+{{/* Hero band */}}
+<section class="relative mb-6 overflow-hidden rounded-box border border-primary/30 shadow-sm">
+  <div class="brand-gradient absolute inset-0 opacity-90"></div>
+  <div class="pointer-events-none absolute -right-16 -top-24 size-72 rounded-full bg-base-100/25 blur-2xl"></div>
+  <div class="pointer-events-none absolute -bottom-28 left-1/3 size-72 rounded-full bg-secondary/40 blur-3xl"></div>
+  <div class="pointer-events-none absolute right-6 top-1/2 hidden -translate-y-1/2 opacity-15 lg:block">{{icon "citrus" "text-[10rem] text-primary-content"}}</div>
+  <div class="relative flex flex-col gap-5 p-6 text-primary-content sm:p-8 lg:flex-row lg:items-end lg:justify-between">
+    <div class="max-w-2xl">
+      <div class="mb-2 inline-flex items-center gap-2 rounded-full bg-base-100/30 px-3 py-1 text-xs font-semibold backdrop-blur">
+        {{icon "sparkles"}} {{if .Scoped}}Your keys &amp; teams{{else}}Gateway overview{{end}} · last {{.Days}} days
+      </div>
+      <h1 class="text-3xl font-extrabold tracking-tight sm:text-4xl">{{.Greeting}}, {{.Name}}</h1>
+      <p class="mt-2 text-sm opacity-80 sm:text-base">
+        {{if .Totals.Requests}}
+          {{compact .Totals.Requests}} requests and {{compact .Totals.Tokens}} tokens served for {{money .Totals.Cost}}{{if .Totals.Requests}}, with {{printf "%.1f" .Totals.ErrorRate}}% errors{{end}}.
+        {{else}}
+          No traffic yet in this period — send your first request from the playground.
+        {{end}}
+      </p>
+    </div>
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-center lg:flex-col lg:items-end">
+      <div class="join w-fit rounded-field bg-base-100/40 p-0.5 backdrop-blur">
+        {{range list 7 30 90}}<a href="/ui?days={{.}}" class="btn join-item btn-sm border-0 {{if eq . $.Data.Days}}bg-base-100 text-base-content shadow-sm{{else}}btn-ghost text-primary-content{{end}}">{{.}} days</a>{{end}}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        <a href="/ui/playground" class="btn btn-sm gap-2 border-0 bg-neutral text-neutral-content shadow-md hover:bg-neutral/90">{{icon "message-square-text"}} Playground</a>
+        {{if .CanCreate}}<a href="/ui/keys" class="btn btn-sm gap-2 border-0 bg-base-100/60 text-base-content backdrop-blur hover:bg-base-100">{{icon "key-round"}} API keys</a>{{end}}
+        <a href="/ui/usage?days={{.Days}}" class="btn btn-sm gap-2 border-0 bg-base-100/60 text-base-content backdrop-blur hover:bg-base-100">{{icon "chart-column"}} Usage</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+{{/* Getting started */}}
+{{if .Checklist.Show}}
+<section class="glass-card relative mb-6 overflow-hidden p-6">
+  <div class="pointer-events-none absolute -right-20 -top-20 size-56 rounded-full bg-primary/20 blur-3xl"></div>
+  <div class="relative flex flex-col gap-5 lg:flex-row lg:items-center">
+    <div class="lg:w-72">
+      <div class="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider opacity-60">{{icon "rocket"}} Getting started</div>
+      <h2 class="mt-1 text-xl font-semibold">Get your gateway serving</h2>
+      <p class="mt-1 text-sm opacity-60">{{.Checklist.Done}} of 3 steps complete</p>
+      <progress class="progress progress-primary mt-3 h-2 w-full" value="{{.Checklist.Done}}" max="3"></progress>
+    </div>
+    <ol class="grid flex-1 grid-cols-1 gap-3 md:grid-cols-3">
+      {{template "dash-step" dict "N" 1 "Done" .Checklist.HasModels "Title" "Connect a model" "Body" "Point the gateway at a vLLM server and give it a public name." "Href" "/ui/models" "Cta" "Add a model" "Icon" "server" "Hide" (not .Checklist.CanModels)}}
+      {{template "dash-step" dict "N" 2 "Done" .Checklist.HasKeys "Title" "Create an API key" "Body" "Issue a virtual key with its own budget, models and limits." "Href" "/ui/keys" "Cta" "Create key" "Icon" "key-round"}}
+      {{template "dash-step" dict "N" 3 "Done" .Checklist.HasTraffic "Title" "Send a request" "Body" "Chat with a model in the playground or call /v1 from your app." "Href" "/ui/playground" "Cta" "Open playground" "Icon" "message-square-text"}}
+    </ol>
+  </div>
+</section>
+{{end}}
+
+{{/* KPIs */}}
+<section class="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+  {{range .KPIs}}{{template "dash-kpi" .}}{{end}}
+</section>
+
+{{/* Charts */}}
+<section class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+  <div class="glass-card p-5 lg:col-span-2">
+    <div class="mb-4 flex items-center justify-between">
+      <div>
+        <h2 class="font-semibold">Spend over time</h2>
+        <p class="text-xs opacity-60">Daily cost across {{if .Scoped}}your keys and teams{{else}}all keys{{end}}</p>
+      </div>
+      <span class="text-lg font-semibold tabular-nums">{{money .Totals.Cost}}</span>
+    </div>
+    <div class="h-64"><canvas data-chart="{{json .SpendChart}}"></canvas></div>
+  </div>
+  <div class="glass-card flex flex-col p-5">
+    <div class="mb-4">
+      <h2 class="font-semibold">Spend by model</h2>
+      <p class="text-xs opacity-60">Share of cost, top models</p>
+    </div>
+    {{if .HasModelMix}}
+      <div class="h-44"><canvas data-chart="{{json .ShareChart}}"></canvas></div>
+      <ul class="mt-4 flex flex-col gap-2">
+        {{range .TopModels}}
+        <li class="flex items-center justify-between gap-2 text-sm">
+          <a href="/ui/usage?model={{.Key}}&days={{$.Data.Days}}" class="truncate font-mono text-xs hover:underline">{{.Label}}</a>
+          <span class="flex shrink-0 items-center gap-3 tabular-nums"><span class="text-xs opacity-50">{{compact .Requests}} req</span><span class="font-medium">{{money .Cost}}</span></span>
+        </li>
+        {{end}}
+      </ul>
+    {{else}}
+      <div class="flex flex-1 flex-col items-center justify-center gap-2 py-8 text-center text-sm opacity-60">{{icon "chart-pie" "text-3xl"}}<span>No model traffic yet.</span></div>
+    {{end}}
+  </div>
+</section>
+
+<section class="mt-6 glass-card p-5">
+  <div class="mb-4 flex items-center justify-between">
+    <div>
+      <h2 class="font-semibold">Requests by model</h2>
+      <p class="text-xs opacity-60">Daily request volume, stacked by model group</p>
+    </div>
+    <a href="/ui/usage?group=model&days={{.Days}}" class="btn btn-ghost btn-xs gap-1">Details {{icon "arrow-right"}}</a>
+  </div>
+  <div class="h-64"><canvas data-chart="{{json .ModelChart}}"></canvas></div>
+</section>
+
+<section class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+  <div class="glass-card p-5">
+    <div class="mb-1 flex items-center justify-between">
+      <h2 class="flex items-center gap-2 font-semibold">{{icon "key-round" "opacity-60"}} Top keys</h2>
+      <a href="/ui/usage?group=key&days={{.Days}}" class="btn btn-ghost btn-xs gap-1">All keys {{icon "arrow-right"}}</a>
+    </div>
+    {{template "dash-top" dict "Rows" .TopKeys "Kind" "key" "Days" .Days "Icon" "key-round"}}
+  </div>
+  <div class="glass-card p-5">
+    <div class="mb-1 flex items-center justify-between">
+      <h2 class="flex items-center gap-2 font-semibold">{{icon "users" "opacity-60"}} Top teams</h2>
+      <a href="/ui/usage?group=team&days={{.Days}}" class="btn btn-ghost btn-xs gap-1">All teams {{icon "arrow-right"}}</a>
+    </div>
+    {{template "dash-top" dict "Rows" .TopTeams "Kind" "team" "Days" .Days "Icon" "users"}}
+  </div>
+</section>
+
+<section class="mt-8">
+  {{template "health-strip" (dict "Data" .Health)}}
+</section>
+{{end}}
+{{end}}

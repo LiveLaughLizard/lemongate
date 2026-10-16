@@ -1,0 +1,194 @@
+{{define "tag-dot"}}<span class="inline-block size-3 shrink-0 rounded-full ring-2 ring-base-100" style="background: {{if .}}{{.}}{{else}}var(--color-base-300){{end}}"></span>{{end}}
+
+{{define "tags-table"}}
+{{$p := .P}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">
+    {{if .Searched}}{{template "empty" dict "Icon" "search-x" "Title" "No matching tags"}}
+    {{else}}{{template "empty" dict "Icon" "tags" "Title" "No tags registered" "Body" "Tags work without registration. Register one to give it a color, a description and an optional budget."}}{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Tag</th><th>Spend · {{.Days}}d</th><th>Requests</th><th>Tokens</th><th>Keys</th><th>Budget</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td>
+          <a href="/ui/tags/{{.Name}}" class="group flex items-center gap-3">
+            {{template "tag-dot" .Color}}
+            <div class="min-w-0">
+              <div class="font-mono text-sm font-semibold group-hover:underline">{{.Name}}</div>
+              {{if .Description}}<div class="max-w-xs truncate text-xs opacity-60">{{.Description}}</div>{{end}}
+            </div>
+          </a>
+        </td>
+        <td class="min-w-36">
+          <div class="text-sm font-semibold tabular-nums">{{money .Usage.Cost}}</div>
+          {{if gt $.Data.MaxCost 0.0}}<progress class="progress progress-primary h-1 w-full" value="{{divf .Usage.Cost $.Data.MaxCost}}" max="1"></progress>{{end}}
+        </td>
+        <td class="tabular-nums">{{compact .Usage.Requests}}{{if gt .Usage.Failures 0}} <span class="text-xs text-error">· {{compact .Usage.Failures}} err</span>{{end}}</td>
+        <td class="tabular-nums">{{compact .Usage.Tokens}}</td>
+        <td>{{if .Keys}}<span class="badge badge-ghost badge-sm">{{.Keys}} key{{if ne .Keys 1}}s{{end}}</span>{{else}}<span class="opacity-40">—</span>{{end}}</td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              <li><a href="/ui/tags/{{.Name}}">{{icon "eye"}} View details</a></li>
+              {{if $p.IsAdmin}}
+              <li><button hx-get="/ui/tags/{{.Name}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+              {{if gt .Spend 0.0}}<li><button hx-post="/ui/tags/{{.Name}}/reset-spend" hx-confirm="Reset the budget counter for {{.Name}} to $0?">{{icon "rotate-ccw"}} Reset spend</button></li>{{end}}
+              <li><button class="text-error" hx-post="/ui/tags/{{.Name}}/delete" hx-confirm="Delete tag {{.Name}}? Keys keep the tag and historic usage is kept; only its color, description and budget are removed.">{{icon "trash-2"}} Delete</button></li>
+              {{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Rows}} tag{{if ne (len .Rows) 1}}s{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "tag-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/tags"{{else}}hx-post="/ui/tags/{{.Tag.Name}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-lg" x-data="{color: {{json (or .Tag.Color "#eab308")}}, name: {{json .Tag.Name}}}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New tag") "Edit tag") "Sub" "Requests carrying this tag count toward its spend and budget." "Icon" "tag"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <div class="flex items-center gap-3 rounded-box border border-base-300 bg-base-200/50 p-3">
+      <span class="text-xs uppercase tracking-wider opacity-50">Preview</span>
+      <span class="badge gap-2 border-0 font-mono" :style="`background: color-mix(in oklch, ${color} 22%, transparent)`"><span class="size-2.5 rounded-full" :style="`background: ${color}`"></span><span x-text="name || 'tag-name'"></span></span>
+    </div>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Name</legend>
+      {{if .IsNew}}
+      <label class="input w-full">{{icon "tag" "opacity-50"}}<input name="name" x-model="name" value="{{.Tag.Name}}" class="font-mono" placeholder="project-atlas" required maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9_.:\/\-]*"></label>
+      <p class="label text-xs">Letters, digits and <code>_ . : / -</code>. Must match what clients send.</p>
+      {{else}}
+      <input value="{{.Tag.Name}}" class="input w-full font-mono" disabled>
+      {{end}}
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Color</legend>
+      <div class="flex flex-wrap items-center gap-2">
+        {{range .Palette}}
+        <button type="button" class="size-7 rounded-full transition hover:scale-110" style="background: {{.}}" :class="color==={{json (.)}} && 'ring-2 ring-offset-2 ring-offset-base-100 ring-base-content'" @click="color={{json (.)}}" aria-label="{{.}}"></button>
+        {{end}}
+        <label class="ml-1 flex items-center gap-2">
+          <input type="color" class="size-8 cursor-pointer rounded-full border border-base-300 bg-transparent" x-model="color" aria-label="Custom color">
+          <input type="text" name="color" x-model="color" class="input input-sm w-24 font-mono" maxlength="7">
+        </label>
+      </div>
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Description</legend>
+      <textarea name="description" rows="2" class="textarea w-full" placeholder="What this tag tracks, who owns it…">{{.Tag.Description}}</textarea>
+    </fieldset>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Max budget (USD)</legend>
+        <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.01" min="0" name="max_budget" value="{{val .Tag.MaxBudget}}" placeholder="Unlimited"></label>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Budget resets</legend>
+        <select name="budget_period" class="select w-full">
+          <option value="" {{if eq .Tag.BudgetPeriod ""}}selected{{end}}>Never (lifetime)</option>
+          <option value="daily" {{if eq .Tag.BudgetPeriod "daily"}}selected{{end}}>Daily</option>
+          <option value="weekly" {{if eq .Tag.BudgetPeriod "weekly"}}selected{{end}}>Weekly</option>
+          <option value="monthly" {{if eq .Tag.BudgetPeriod "monthly"}}selected{{end}}>Monthly</option>
+        </select>
+      </fieldset>
+    </div>
+    <p class="text-xs opacity-60">{{icon "info" "opacity-60"}} Requests are rejected once a tag they carry exceeds its budget.</p>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create tag") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "tag-detail"}}
+{{$p := .P}}
+{{with .Data}}
+<div id="tag-detail" hx-get="/ui/tags/{{.Tag.Name}}?days={{.Days}}" hx-trigger="refresh-tag from:body" hx-target="#tag-detail" hx-swap="outerHTML" hx-select="#tag-detail" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex items-center gap-4">
+      <div class="flex size-14 items-center justify-center rounded-2xl text-white shadow-md" style="background: {{or .Tag.Color "var(--color-primary)"}}">{{icon "tag" "text-2xl"}}</div>
+      <div>
+        <h1 class="page-title font-mono">{{.Tag.Name}}</h1>
+        <p class="page-sub mt-0.5">{{if .Tag.Description}}{{.Tag.Description}}{{else}}Registered {{ago .Tag.CreatedAt}}{{end}}</p>
+      </div>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+      <div class="join">{{range list 7 30 90}}<a href="/ui/tags/{{$.Data.Tag.Name}}?days={{.}}" class="btn join-item btn-sm {{if eq . $.Data.Days}}btn-active{{end}}">{{.}}d</a>{{end}}</div>
+      {{if $p.IsAdmin}}
+      <button class="btn btn-sm gap-2" hx-get="/ui/tags/{{.Tag.Name}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button>
+      {{if gt .Tag.Spend 0.0}}<button class="btn btn-sm gap-2" hx-post="/ui/tags/{{.Tag.Name}}/reset-spend" hx-confirm="Reset this tag's budget counter to $0?">{{icon "rotate-ccw"}} Reset spend</button>{{end}}
+      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/tags/{{.Tag.Name}}/delete?from=detail" hx-confirm="Delete this tag? Usage history is kept.">{{icon "trash-2"}} Delete</button>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" (printf "Spend · %dd" .Days) "Value" (money .Totals.Cost) "Icon" "wallet"}}
+    {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%s failed" (compact .Totals.Failures))}}
+    {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent" "Hint" (printf "%s in · %s out" (compact .Totals.PromptTokens) (compact .Totals.CompletionTokens))}}
+    {{template "stat" dict "Label" "Keys tagged" "Value" (num (len .Keys)) "Icon" "key-round" "Tone" "info"}}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5 lg:col-span-2">
+      <h2 class="mb-4 font-semibold">Daily spend</h2>
+      <div class="h-64"><canvas data-chart="{{json .Chart}}"></canvas></div>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Budget</h2>
+      {{template "budget" dict "Spend" .Tag.Spend "Max" .Tag.MaxBudget "Period" .Tag.BudgetPeriod}}
+      {{if .Tag.BudgetResetAt}}<p class="mt-2 text-xs opacity-60">Resets {{ago .Tag.BudgetResetAt}} ({{dt .Tag.BudgetResetAt}})</p>{{end}}
+      <div class="divider my-3"></div>
+      <h3 class="mb-3 text-sm font-semibold">By model · {{.Days}}d</h3>
+      {{if .ByModel}}
+      {{$max := (index .ByModel 0).Cost}}
+      <ul class="flex flex-col gap-3">
+        {{range .ByModel}}
+        <li>
+          <div class="flex justify-between text-sm"><span class="font-mono text-xs">{{or .Tag "unknown"}}</span><span class="tabular-nums">{{money .Cost}}</span></div>
+          <progress class="progress progress-primary h-1.5 w-full" value="{{if gt $max 0.0}}{{divf .Cost $max}}{{else}}0{{end}}" max="1"></progress>
+          <div class="text-[11px] opacity-50">{{compact .Requests}} requests · {{compact .Tokens}} tokens</div>
+        </li>
+        {{end}}
+      </ul>
+      {{else}}<p class="text-sm opacity-60">No traffic in this period.</p>{{end}}
+    </div>
+  </div>
+
+  <div class="mt-6">
+    <h2 class="mb-3 font-semibold">Keys carrying this tag</h2>
+    {{if .Keys}}
+    <div class="table-lg-wrap">
+      <table>
+        <thead><tr><th>Key</th><th>Owner</th><th>Spend</th><th>Last used</th></tr></thead>
+        <tbody>
+        {{range .Keys}}
+        <tr>
+          <td><a href="/ui/keys/{{.ID}}" class="font-semibold hover:underline">{{if .Alias}}{{.Alias}}{{else}}Untitled key{{end}}</a><div class="mono opacity-60">{{.KeyHint}}</div></td>
+          <td class="text-sm">{{if .UserEmail}}{{deref .UserEmail}}{{end}}{{if .TeamName}}<div class="text-xs opacity-60">{{deref .TeamName}}</div>{{end}}{{if and (not .UserEmail) (not .TeamName)}}<span class="opacity-50">—</span>{{end}}</td>
+          <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+          <td class="text-xs">{{ago .LastUsedAt}}</td>
+        </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}
+    <div class="glass-card">{{template "empty" dict "Icon" "key-round" "Title" "No keys carry this tag" "Body" "Requests can still be tagged per call with the x-lemongate-tags header or metadata.tags."}}</div>
+    {{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

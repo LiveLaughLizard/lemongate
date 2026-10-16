@@ -1,0 +1,153 @@
+{{define "presets-grid"}}
+{{with .Data}}
+<div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Cards}}
+  <article id="preset-{{.ID}}" data-preset="{{.ID}}" data-pack="{{.Pack}}" x-show="!pack || pack === $el.dataset.pack"
+    class="glass-card card-hover relative flex flex-col overflow-hidden">
+    <div class="absolute inset-x-0 top-0 h-1 {{if .Installed}}bg-success{{else}}brand-gradient opacity-70{{end}}"></div>
+    <div class="flex flex-1 flex-col gap-3 p-5">
+      <div class="flex items-start gap-3">
+        <div class="flex size-11 shrink-0 items-center justify-center rounded-2xl {{if .Installed}}bg-success/15 text-success{{else}}brand-gradient text-primary-content{{end}} shadow-sm">{{icon .Icon "text-xl"}}</div>
+        <div class="min-w-0 flex-1">
+          <h3 class="font-semibold leading-snug">{{.Title}}</h3>
+          <div class="text-xs opacity-60">{{.PackLabel}}</div>
+        </div>
+        {{if .Installed}}
+        <a href="/ui/guardrails?tab=policies#policy-{{.Policy.Name}}" class="badge badge-success badge-soft badge-sm shrink-0 gap-1" title="Installed as policy {{.Policy.Name}}">{{icon "circle-check"}} Installed</a>
+        {{end}}
+      </div>
+      <p class="line-clamp-3 text-sm opacity-75" title="{{.Description}}">{{.Description}}</p>
+      <div class="flex flex-wrap gap-1.5">
+        <span class="badge badge-ghost badge-sm gap-1" title="Added latency">{{icon "timer" "opacity-60"}}{{.Latency}}</span>
+        <span class="badge badge-ghost badge-sm gap-1">{{icon "shield-check" "opacity-60"}}{{.Count}} guardrail{{if ne .Count 1}}s{{end}}</span>
+        {{if .Needs}}<span class="badge badge-warning badge-soft badge-sm gap-1" title="Pick the model when installing">{{icon "cpu"}}needs {{.Needs}}</span>{{end}}
+        {{if .Installed}}{{if and .Policy.Enabled .Policy.DefaultOn}}<span class="badge badge-info badge-soft badge-sm gap-1">{{icon "globe"}}default-on</span>{{else if not .Policy.Enabled}}<span class="badge badge-warning badge-soft badge-sm">disabled</span>{{end}}{{end}}
+      </div>
+      <div class="mt-auto flex flex-wrap items-center justify-end gap-2 border-t border-base-300/60 pt-4">
+        {{if .Installed}}
+          <a href="/ui/guardrails?tab=bench&amp;policy={{.Policy.Name}}" class="btn btn-ghost btn-sm mr-auto gap-1" title="Try it on the test bench">{{icon "flask-conical"}} Test</a>
+          {{if $.Data.CanEdit}}
+          <button type="button" class="btn btn-ghost btn-sm gap-1 text-error" hx-post="/ui/guardrails/presets/{{.ID}}/uninstall"
+            hx-confirm="Uninstall {{.Title}}? This deletes policy {{.Policy.Name}} and the guardrails only it uses. Keys and teams that attach it stop being checked by it.">{{icon "trash-2"}} Uninstall</button>
+          <button type="button" class="btn btn-sm gap-1 border-base-300" hx-get="/ui/guardrails/presets/{{.ID}}/install" hx-target="#modal-body">{{icon "settings-2"}} Update</button>
+          {{else}}
+          <button type="button" class="btn btn-ghost btn-sm gap-1" hx-get="/ui/guardrails/presets/{{.ID}}/install" hx-target="#modal-body">{{icon "eye"}} Details</button>
+          {{end}}
+        {{else if $.Data.CanEdit}}
+          <button type="button" class="btn btn-ghost btn-sm mr-auto gap-1" hx-get="/ui/guardrails/presets/{{.ID}}/install" hx-target="#modal-body">{{icon "eye"}} Details</button>
+          <button type="button" class="btn btn-primary btn-sm gap-1" hx-get="/ui/guardrails/presets/{{.ID}}/install" hx-target="#modal-body">{{icon "download"}} Install</button>
+        {{else}}
+          <button type="button" class="btn btn-ghost btn-sm gap-1" hx-get="/ui/guardrails/presets/{{.ID}}/install" hx-target="#modal-body">{{icon "eye"}} Details</button>
+        {{end}}
+      </div>
+    </div>
+  </article>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "preset-install"}}
+{{with .Data}}
+<form hx-post="/ui/guardrails/presets/{{.P.ID}}/install" hx-target="#modal-body" data-modal-size="max-w-3xl"
+  x-data="{mode: {{json .Mode}}, action: {{json .Action}}, rows: {{json .Preview}}, adv: {{if or .Mode .Action}}true{{else}}false{{end}},
+    effMode(r) { return this.mode || r.mode },
+    effAction(r) { const a = this.action || r.action; return a === 'mask' && !r.can_mask ? 'block' : a }}">
+  {{template "modal-head" dict "Title" (or (and .Installed (printf "Update %s" .P.Title)) (printf "Install %s" .P.Title)) "Sub" .PackLabel "Icon" .P.Icon}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "form-error" .Error}}
+    <p class="text-sm opacity-80">{{.P.Description}}</p>
+    {{if .Installed}}
+    <div role="status" class="alert alert-success alert-soft text-sm">{{icon "circle-check"}}<span>Installed as policy <a class="link font-mono font-medium" href="/ui/guardrails?tab=policies#policy-{{.Policy.Name}}">{{.Policy.Name}}</a>. Saving re-applies the preset with these settings; edits made to its guardrails are replaced.</span></div>
+    {{end}}
+    {{if .Conflicts}}
+    <div role="alert" class="alert alert-warning alert-soft text-sm">{{icon "triangle-alert"}}<span>Guardrail name{{if gt (len .Conflicts) 1}}s{{end}} <span class="font-mono">{{joinc .Conflicts}}</span> {{if gt (len .Conflicts) 1}}are{{else}}is{{end}} already used by a guardrail this preset did not create. Rename or delete it before installing.</span></div>
+    {{end}}
+
+    <div>
+      <div class="mb-2 flex items-center justify-between">
+        <span class="text-xs font-semibold uppercase tracking-wider opacity-60">Creates {{len .Preview}} guardrail{{if ne (len .Preview) 1}}s{{end}} + policy <span class="font-mono normal-case">{{.P.ID}}</span></span>
+        <span class="badge badge-ghost badge-sm gap-1">{{icon "timer" "opacity-60"}}{{.P.Latency}}</span>
+      </div>
+      <ul class="flex flex-col divide-y divide-base-300 rounded-field border border-base-300">
+        {{range $i, $r := .Preview}}
+        <li class="flex flex-col gap-2 px-3 py-2.5 sm:flex-row sm:items-center">
+          <div class="flex min-w-0 flex-1 items-center gap-3">
+            <span class="flex size-8 shrink-0 items-center justify-center rounded-lg {{if .Conflict}}bg-warning/20 text-warning{{else}}bg-primary/25{{end}}">{{icon .Icon}}</span>
+            <div class="min-w-0">
+              <div class="truncate font-mono text-sm font-medium">{{.Name}}</div>
+              <div class="text-xs opacity-60">{{.KindLabel}} · {{.Description}}</div>
+            </div>
+          </div>
+          <div class="flex shrink-0 items-center gap-1.5 pl-11 sm:pl-0">
+            <span class="badge badge-sm badge-outline" x-text="effMode(rows[{{$i}}]) === 'both' ? 'pre + post' : effMode(rows[{{$i}}])">{{if eq .Mode "both"}}pre + post{{else}}{{.Mode}}{{end}}</span>
+            <span class="badge badge-sm gap-1" :class="{block: 'badge-error', mask: 'badge-info', log: 'badge-ghost'}[effAction(rows[{{$i}}])]" x-text="effAction(rows[{{$i}}])">{{.Action}}</span>
+          </div>
+        </li>
+        {{end}}
+      </ul>
+    </div>
+
+    {{range .Params}}
+    <fieldset class="fieldset min-w-0">
+      <legend class="fieldset-legend">{{.Label}}{{if .Required}} <span class="text-error">*</span>{{end}}</legend>
+      {{if eq .Type "model"}}
+        {{$v := .Value}}
+        <select name="param_{{.ID}}" class="select w-full" {{if not $.Data.CanEdit}}disabled{{end}}>
+          <option value="">Choose a model…</option>
+          {{if .Suggested}}<optgroup label="{{.Mode}} models">{{range .Suggested}}<option value="{{.Name}}" {{if eq .Name $v}}selected{{end}}>{{.Name}}</option>{{end}}</optgroup>{{end}}
+          {{if .Other}}<optgroup label="Other models">{{range .Other}}<option value="{{.Name}}" {{if eq .Name $v}}selected{{end}}>{{.Name}} ({{.Mode}})</option>{{end}}</optgroup>{{end}}
+        </select>
+        {{if not .Suggested}}
+        <div role="alert" class="alert alert-warning alert-soft mt-2 text-xs">{{icon "triangle-alert"}}<span>No {{.Mode}} models are configured{{if .FamilyLabel}} — this preset needs a {{.FamilyLabel}} model served by vLLM{{end}}. <a href="/ui/models" class="link font-medium">Add it under Models</a> (mode <code>{{.Mode}}</code>), then install.</span></div>
+        {{else}}
+        <p class="mt-1 text-xs text-base-content/60">{{.Help}}{{if .FamilyLabel}} Choose the model that serves {{.FamilyLabel}}.{{end}}</p>
+        {{end}}
+      {{else}}
+        <input name="param_{{.ID}}" value="{{.Value}}" class="input w-full" placeholder="{{.Help}}" {{if not $.Data.CanEdit}}disabled{{end}}>
+        <p class="mt-1 text-xs text-base-content/60">{{.Help}}</p>
+      {{end}}
+    </fieldset>
+    {{end}}
+
+    <label class="flex cursor-pointer items-start gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+      <input type="checkbox" name="default_on" class="toggle toggle-primary mt-0.5" {{if .DefaultOn}}checked{{end}} {{if not .CanEdit}}disabled{{end}}>
+      <span><span class="font-medium">Apply to all traffic (default-on)</span><span class="block text-xs opacity-60">Otherwise the policy only runs for keys and teams that attach it, or calls that request it with <code>"guardrails": ["{{.P.ID}}"]</code>.</span></span>
+    </label>
+
+    <div class="rounded-box border border-base-300">
+      <button type="button" class="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium" @click="adv = !adv" :aria-expanded="adv">
+        <span class="opacity-50 transition" :class="adv && 'rotate-90'">{{icon "chevron-right"}}</span> Advanced overrides
+        <span class="ml-auto text-xs font-normal opacity-50" x-show="mode || action" x-cloak>customized</span>
+      </button>
+      <div x-show="adv" x-cloak class="grid grid-cols-1 gap-4 border-t border-base-300 p-3 sm:grid-cols-2">
+        <fieldset class="fieldset min-w-0">
+          <legend class="fieldset-legend">Mode for every guardrail</legend>
+          <select name="mode" class="select w-full" x-model="mode" {{if not .CanEdit}}disabled{{end}}>
+            <option value="">Preset defaults</option>
+            {{range .ModeOptions}}<option value="{{.}}">{{if eq . "pre"}}Requests only (pre){{else if eq . "post"}}Responses only (post){{else}}Requests and responses{{end}}</option>{{end}}
+          </select>
+        </fieldset>
+        <fieldset class="fieldset min-w-0">
+          <legend class="fieldset-legend">Action for every guardrail</legend>
+          <select name="action" class="select w-full" x-model="action" {{if not .CanEdit}}disabled{{end}}>
+            <option value="">Preset defaults</option>
+            <option value="block">Block</option>
+            {{if .AnyMask}}<option value="mask">Mask (block where masking is impossible)</option>{{end}}
+            <option value="log">Log only (monitor mode)</option>
+          </select>
+        </fieldset>
+        <p class="text-xs opacity-60 sm:col-span-2">Tip: install with <em>Log only</em> first to see what a preset would catch in the Events tab, then switch back to the defaults.</p>
+      </div>
+    </div>
+  </div>
+  {{if .CanEdit}}
+  {{template "modal-actions" dict "Label" (or (and .Installed "Update preset") "Install preset")}}
+  {{else}}
+  <div class="sticky bottom-0 flex justify-end gap-2 border-t border-base-300 bg-base-100 px-6 py-4">
+    <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').close()">Close</button>
+  </div>
+  {{end}}
+</form>
+{{end}}
+{{end}}

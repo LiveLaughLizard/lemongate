@@ -1,0 +1,48 @@
+{{define "content"}}
+{{template "mcp-server-head" .}}
+{{with .Data}}
+<div class="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-5">
+  <section class="min-w-0 xl:col-span-3">
+    <div class="mb-3 flex items-center justify-between gap-3">
+      <h2 class="flex items-center gap-2 text-lg font-semibold">{{icon "wrench" "opacity-60"}} Tools</h2>
+      {{if .Server.Enabled}}
+      <button class="btn btn-ghost btn-sm gap-2" hx-get="/ui/mcp/{{.Server.ID}}/tools?refresh=1" hx-target="#mcp-tools" hx-indicator="#tools-spin">
+        <span id="tools-spin" class="loading loading-spinner loading-xs htmx-indicator"></span>{{icon "refresh-cw"}} Refresh
+      </button>
+      {{end}}
+    </div>
+    <div id="mcp-tools" hx-get="/ui/mcp/{{.Server.ID}}/tools" hx-trigger="load">
+      <div class="flex flex-col gap-3">{{range seq 3}}<div class="skeleton h-24 w-full"></div>{{end}}</div>
+    </div>
+  </section>
+  <section class="min-w-0 xl:col-span-2">
+    <div class="mb-3 flex flex-col gap-3">
+      <h2 class="flex items-center gap-2 text-lg font-semibold">{{icon "activity" "opacity-60"}} Recent calls</h2>
+      <form id="srv-call-filters" class="flex flex-wrap gap-2" hx-get="/ui/mcp/calls" hx-target="#mcp-calls" hx-trigger="change from:select">
+        <input type="hidden" name="server" value="{{.Server.Name}}">
+        <input type="hidden" name="compact" value="1">
+        {{if .ToolOpts}}
+        <select name="tool" class="select select-sm w-36">
+          <option value="">All tools</option>
+          {{range .ToolOpts}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+        {{end}}
+        <select name="status" class="select select-sm w-28">
+          <option value="">Any</option>
+          <option value="ok">Succeeded</option>
+          <option value="error">Failed</option>
+        </select>
+        <select name="range" class="select select-sm w-28">
+          <option value="24h">24h</option>
+          <option value="7d">7 days</option>
+          <option value="30d">30 days</option>
+        </select>
+      </form>
+    </div>
+    <div id="mcp-calls" hx-get="/ui/mcp/calls" hx-trigger="load, refresh-mcp-calls from:body" hx-include="#srv-call-filters">
+      <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 4}}<div class="skeleton h-8 w-full"></div>{{end}}</div></div>
+    </div>
+  </section>
+</div>
+{{end}}
+{{end}}

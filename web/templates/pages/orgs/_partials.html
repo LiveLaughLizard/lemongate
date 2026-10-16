@@ -1,0 +1,252 @@
+{{define "orgs-table"}}
+{{$p := .P}}
+{{with .Data}}
+{{if not .Orgs}}
+  <div class="glass-card">{{template "empty" dict "Icon" "building-2" "Title" "No organizations yet" "Body" "Organizations are optional. Use them to cap spend and restrict models across several teams at once."}}</div>
+{{else}}
+<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Orgs}}
+  <div class="glass-card card-hover relative flex flex-col gap-4 p-5">
+    <div class="flex items-start justify-between gap-3">
+      <a href="/ui/orgs/{{.ID}}" class="group flex min-w-0 items-center gap-3">
+        <div class="flex size-11 shrink-0 items-center justify-center rounded-xl {{if .Blocked}}bg-error/15 text-error{{else}}bg-info/15 text-info{{end}}">{{icon "building-2" "text-xl"}}</div>
+        <div class="min-w-0">
+          <div class="flex items-center gap-2 truncate font-semibold group-hover:underline">{{.Name}}{{if .Blocked}}<span class="badge badge-error badge-xs">blocked</span>{{end}}</div>
+          <div class="truncate text-xs opacity-60">{{or .Description "No description"}}</div>
+        </div>
+      </a>
+      {{if $p.IsAdmin}}
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">{{icon "ellipsis-vertical"}}</div>
+        <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+          <li><a href="/ui/orgs/{{.ID}}">{{icon "eye"}} View details</a></li>
+          <li><button hx-get="/ui/orgs/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+          {{if .Blocked}}<li><button hx-post="/ui/orgs/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
+          {{else}}<li><button hx-post="/ui/orgs/{{.ID}}/block" hx-confirm="Block {{.Name}}? Requests from every team and user in it will be rejected.">{{icon "ban"}} Block</button></li>{{end}}
+          <li><button class="text-error" hx-post="/ui/orgs/{{.ID}}/delete" hx-confirm="Delete {{.Name}}? Its teams and users are kept but detached from the organization.">{{icon "trash-2"}} Delete</button></li>
+        </ul>
+      </div>
+      {{end}}
+    </div>
+    <div class="grid grid-cols-2 gap-3 text-sm">
+      <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[11px] uppercase tracking-wider opacity-50">Teams</div><div class="font-semibold tabular-nums">{{.TeamCount}}</div></div>
+      <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[11px] uppercase tracking-wider opacity-50">Users</div><div class="font-semibold tabular-nums">{{.UserCount}}</div></div>
+    </div>
+    {{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}
+    <div class="mt-auto">{{template "chips" dict "Models" .Models}}</div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "org-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/orgs"{{else}}hx-post="/ui/orgs/{{.Org.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-3xl">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New organization") (printf "Edit %s" .Org.Name)) "Sub" "Limits here apply on top of every team and user in the organization." "Icon" "building-2"}}
+  <div class="flex flex-col gap-5 px-6 py-5" x-data="{adv: false}">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.Org.Name}}" class="input w-full" placeholder="e.g. Research" maxlength="120" required>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Description</legend>
+        <input name="description" value="{{.Org.Description}}" class="input w-full" placeholder="Optional" maxlength="500">
+      </fieldset>
+    </div>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Allowed models</legend>
+      {{template "model-picker" dict "Name" "models" "Options" .Models "Groups" .Groups "Selected" .Org.Models}}
+    </fieldset>
+    {{template "limit-fields" dict "MaxBudget" .Org.MaxBudget "BudgetPeriod" .Org.BudgetPeriod "RPM" .Org.RPMLimit "TPM" .Org.TPMLimit "NoParallel" true}}
+    <button type="button" class="btn btn-ghost btn-sm self-start gap-2" @click="adv=!adv">
+      <span x-show="!adv">{{icon "chevron-right"}}</span><span x-show="adv" x-cloak>{{icon "chevron-down"}}</span> Advanced
+    </button>
+    <div x-show="adv" x-cloak class="flex flex-col gap-4">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Metadata (JSON)</legend>
+        <textarea name="metadata" rows="3" class="textarea w-full font-mono text-xs" placeholder='{"billing_account": "4410"}'>{{if .Org.Metadata}}{{pretty .Org.Metadata}}{{end}}</textarea>
+      </fieldset>
+      <label class="label cursor-pointer gap-3">
+        <input type="checkbox" name="blocked" class="toggle toggle-error toggle-sm" {{if .Org.Blocked}}checked{{end}}>
+        <span class="text-sm">Blocked — reject requests from every team and user in this organization</span>
+      </label>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create organization") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "org-add-team"}}
+{{with .Data}}
+<form hx-post="/ui/orgs/{{.Org.ID}}/teams" hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" "Add teams" "Sub" (printf "Move teams into %s" .Org.Name) "Icon" "users"}}
+  <div class="flex flex-col gap-3 px-6 py-5" x-data="{q: ''}">
+    {{if .Teams}}
+    <label class="input input-sm w-full">{{icon "search" "opacity-50"}}<input type="text" x-model="q" placeholder="Filter teams…"></label>
+    <div class="max-h-72 overflow-y-auto rounded-field border border-base-300 p-2">
+      {{range .Teams}}
+      <label class="flex cursor-pointer items-center gap-3 rounded px-2 py-1.5 hover:bg-base-200" x-show="!q || {{json (.Name)}}.toLowerCase().includes(q.toLowerCase())">
+        <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" name="team_id" value="{{.ID}}">
+        <span class="text-sm font-medium">{{.Name}}</span>
+        <span class="ml-auto text-xs opacity-50">{{if .OrgName}}in {{deref .OrgName}}{{else}}no organization{{end}}</span>
+      </label>
+      {{end}}
+    </div>
+    <p class="text-xs opacity-60">A team belongs to at most one organization; selected teams move here.</p>
+    {{else}}
+    {{template "empty" dict "Icon" "users" "Title" "No other teams" "Body" "Every team already belongs to this organization."}}
+    {{end}}
+  </div>
+  {{if .Teams}}{{template "modal-actions" dict "Label" "Add teams"}}{{end}}
+</form>
+{{end}}
+{{end}}
+
+{{define "org-detail"}}
+{{with .Data}}
+<div id="org-detail" hx-get="/ui/orgs/{{.Org.ID}}?days={{.Days}}" hx-trigger="refresh-org from:body" hx-target="#org-detail" hx-swap="outerHTML" hx-select="#org-detail" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex items-center gap-4">
+      <div class="flex size-14 items-center justify-center rounded-2xl shadow-md {{if .Org.Blocked}}bg-error/15 text-error{{else}}brand-gradient text-primary-content{{end}}">{{icon "building-2" "text-2xl"}}</div>
+      <div>
+        <h1 class="page-title flex items-center gap-2">{{.Org.Name}}{{if .Org.Blocked}}<span class="badge badge-error">blocked</span>{{end}}</h1>
+        <div class="mt-1 flex flex-wrap gap-x-3 text-sm opacity-70">
+          {{if .Org.Description}}<span>{{.Org.Description}}</span>{{end}}
+          <span>{{if .Org.Description}}· {{end}}created {{ago .Org.CreatedAt}}</span>
+        </div>
+      </div>
+    </div>
+    {{if .IsAdmin}}
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-sm gap-2" hx-get="/ui/orgs/{{.Org.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button>
+      {{if .Org.Blocked}}<button class="btn btn-sm gap-2" hx-post="/ui/orgs/{{.Org.ID}}/unblock">{{icon "lock-open"}} Unblock</button>
+      {{else}}<button class="btn btn-sm gap-2" hx-post="/ui/orgs/{{.Org.ID}}/block" hx-confirm="Block this organization? All of its teams and users will be rejected.">{{icon "ban"}} Block</button>{{end}}
+      <button class="btn btn-sm gap-2" hx-post="/ui/orgs/{{.Org.ID}}/reset-spend" hx-confirm="Reset this organization's spend counter to $0?">{{icon "rotate-ccw"}} Reset spend</button>
+      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/orgs/{{.Org.ID}}/delete?from=detail" hx-confirm="Delete this organization? Teams and users are kept but detached.">{{icon "trash-2"}} Delete</button>
+    </div>
+    {{end}}
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" (printf "Spend · %dd" .Days) "Value" (money .Totals.Cost) "Icon" "wallet" "Hint" (printf "%s current period" (money .Org.Spend))}}
+    {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%.1f%% errors" .Totals.ErrorRate)}}
+    {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent" "Hint" (printf "%s in · %s out" (compact .Totals.PromptTokens) (compact .Totals.CompletionTokens))}}
+    {{template "stat" dict "Label" "Teams · users" "Value" (printf "%d · %d" .Org.TeamCount .Org.UserCount) "Icon" "users" "Tone" "info" "Hint" (printf "%s rpm · %s tpm now" (num .RPM) (compact .TPM))}}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5 lg:col-span-2">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="font-semibold">Daily spend</h2>
+        <div class="join">
+          {{range list 7 30 90}}<a href="/ui/orgs/{{$.Data.Org.ID}}?days={{.}}" class="btn join-item btn-xs {{if eq . $.Data.Days}}btn-active{{end}}">{{.}}d</a>{{end}}
+        </div>
+      </div>
+      <div class="h-64"><canvas data-chart="{{json .Chart}}"></canvas></div>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Budget &amp; limits</h2>
+      {{template "budget" dict "Spend" .Org.Spend "Max" .Org.MaxBudget "Period" .Org.BudgetPeriod}}
+      {{if .Org.BudgetResetAt}}<p class="mt-2 text-xs opacity-60">Resets {{ago .Org.BudgetResetAt}} ({{dt .Org.BudgetResetAt}})</p>{{end}}
+      <div class="divider my-3"></div>
+      <dl class="kv">
+        <dt>Rate limits</dt>
+        <dd>{{if .Org.RPMLimit}}{{num (derefI .Org.RPMLimit)}} rpm{{else}}— rpm{{end}} · {{if .Org.TPMLimit}}{{compact (derefI .Org.TPMLimit)}} tpm{{else}}— tpm{{end}}</dd>
+        <dt>Allowed models</dt>
+        <dd>{{if .Org.Models}}<div class="flex flex-wrap gap-1">{{range .Org.Models}}<span class="badge badge-sm badge-outline font-mono">{{.}}</span>{{end}}</div>{{else}}All models{{end}}</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+    <div>
+      <div class="mb-3 flex min-h-9 items-center justify-between">
+        <h2 class="flex items-center gap-2 font-semibold">{{icon "users" "opacity-60"}} Teams</h2>
+        {{if .IsAdmin}}
+        <div class="flex gap-2">
+          <button class="btn btn-ghost btn-sm gap-2" hx-get="/ui/orgs/{{.Org.ID}}/teams/add" hx-target="#modal-body">{{icon "link"}} Add existing</button>
+          <button class="btn btn-sm gap-2" hx-get="/ui/teams/new?org={{.Org.ID}}" hx-target="#modal-body">{{icon "plus"}} New team</button>
+        </div>
+        {{end}}
+      </div>
+      {{if .Teams}}
+      <div class="table-lg-wrap">
+        <table>
+          <thead><tr><th>Team</th><th>Members</th><th>Budget</th><th></th></tr></thead>
+          <tbody>
+          {{range .Teams}}
+            <tr>
+              <td><a class="font-medium hover:underline" href="/ui/teams/{{.ID}}">{{.Name}}</a>{{if .Blocked}} <span class="badge badge-error badge-xs">blocked</span>{{end}}</td>
+              <td class="text-sm tabular-nums">{{.MemberCount}}</td>
+              <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+              <td class="text-right">{{if $.Data.IsAdmin}}<button class="btn btn-ghost btn-xs btn-square" title="Remove from organization" hx-post="/ui/orgs/{{$.Data.Org.ID}}/teams/{{.ID}}/remove" hx-confirm="Remove {{.Name}} from {{$.Data.Org.Name}}? The team itself is kept.">{{icon "unlink"}}</button>{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="glass-card">{{template "empty" dict "Icon" "users" "Title" "No teams" "Body" "Teams in this organization share its budget and model allow-list."}}</div>
+      {{end}}
+    </div>
+    <div>
+      <div class="mb-3 flex min-h-9 items-center justify-between">
+        <h2 class="flex items-center gap-2 font-semibold">{{icon "user-round" "opacity-60"}} Users</h2>
+      </div>
+      {{if .Users}}
+      <div class="table-lg-wrap">
+        <table>
+          <thead><tr><th>User</th><th>Role</th><th>Spend</th></tr></thead>
+          <tbody>
+          {{range .Users}}
+            <tr>
+              <td><a class="group flex flex-col" href="/ui/users/{{.ID}}"><span class="text-sm font-medium group-hover:underline">{{.DisplayName}}</span>{{if .Name}}<span class="text-xs opacity-60">{{.Email}}</span>{{end}}</a></td>
+              <td>{{template "role-badge" .Role}}</td>
+              <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <div class="glass-card">{{template "empty" dict "Icon" "user-round" "Title" "No users" "Body" "Assign users to this organization from the Users page."}}</div>
+      {{end}}
+    </div>
+  </div>
+
+  {{if or .ByTeam .ByModel}}
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-2">
+    {{range list (dict "Title" "Top teams" "Rows" .ByTeam) (dict "Title" "Top models" "Rows" .ByModel)}}
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">{{.Title}} · {{$.Data.Days}}d</h2>
+      {{if .Rows}}
+      <ul class="flex flex-col gap-3">
+        {{$max := (index .Rows 0).Cost}}
+        {{range .Rows}}
+        <li>
+          <div class="flex justify-between text-sm"><span class="truncate text-xs font-medium">{{.Label}}</span><span class="tabular-nums">{{money .Cost}}</span></div>
+          <progress class="progress progress-primary h-1.5 w-full" value="{{if gt $max 0.0}}{{divf .Cost $max}}{{else}}0{{end}}" max="1"></progress>
+          <div class="text-[11px] opacity-50">{{compact .Requests}} requests · {{compact .Tokens}} tokens</div>
+        </li>
+        {{end}}
+      </ul>
+      {{else}}<p class="text-sm opacity-60">No traffic in this period.</p>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Org.Metadata}}
+  <div class="glass-card mt-6 p-5">
+    <h2 class="mb-3 font-semibold">Metadata</h2>
+    <pre class="mono overflow-x-auto rounded-field bg-base-200 p-3">{{pretty .Org.Metadata}}</pre>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

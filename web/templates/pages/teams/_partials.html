@@ -1,0 +1,404 @@
+{{define "team-avatar"}}
+<div class="flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold {{if .Blocked}}bg-error/15 text-error{{else if .DeletedAt}}bg-base-300 opacity-60{{else}}bg-secondary/20 text-secondary{{end}}">{{initials .Name}}</div>
+{{end}}
+
+{{define "teams-table"}}
+{{$p := .P}}
+{{with .Data}}
+{{if not .Teams}}
+  <div class="glass-card">
+    {{if .Deleted}}{{template "empty" dict "Icon" "trash-2" "Title" "No deleted teams" "Body" "Deleted teams stay here so they can be restored or permanently removed."}}
+    {{else if $p.CanViewAll}}{{template "empty" dict "Icon" "users" "Title" "No teams yet" "Body" "Create a team to share a budget, rate limits and model access across people and keys."}}
+    {{else}}{{template "empty" dict "Icon" "users" "Title" "You're not on a team yet" "Body" "Ask an administrator or a team admin to add you to a team."}}{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr>
+      <th>Team</th><th>Organization</th><th>People &amp; keys</th><th>Models</th><th>Budget</th><th class="text-right"></th>
+    </tr></thead>
+    <tbody>
+    {{range .Teams}}
+      {{$role := index $.Data.Roles .ID}}
+      <tr>
+        <td>
+          <a href="/ui/teams/{{.ID}}" class="group flex items-center gap-3">
+            {{template "team-avatar" .}}
+            <div class="min-w-0">
+              <div class="flex items-center gap-2 font-semibold group-hover:underline">{{.Name}}
+                {{if .Blocked}}<span class="badge badge-error badge-xs">blocked</span>{{end}}
+                {{if $role}}{{template "role-badge" $role}}{{end}}
+              </div>
+              {{if .Description}}<div class="max-w-xs truncate text-xs opacity-60">{{.Description}}</div>{{end}}
+            </div>
+          </a>
+        </td>
+        <td class="text-sm">{{if .OrgName}}<span class="flex items-center gap-1">{{icon "building-2" "opacity-50"}}{{deref .OrgName}}</span>{{else}}<span class="opacity-40">—</span>{{end}}</td>
+        <td class="text-sm">
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1" title="Members">{{icon "user-round" "opacity-50"}}{{.MemberCount}}</span>
+            <span class="flex items-center gap-1" title="Keys">{{icon "key-round" "opacity-50"}}{{.KeyCount}}</span>
+          </div>
+        </td>
+        <td>{{template "chips" dict "Models" .Models}}</td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-52 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              <li><a href="/ui/teams/{{.ID}}">{{icon "eye"}} View details</a></li>
+              {{if $p.IsAdmin}}
+                {{if $.Data.Deleted}}
+                  <li><button hx-post="/ui/teams/{{.ID}}/restore">{{icon "rotate-ccw"}} Restore</button></li>
+                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/purge" hx-confirm="Permanently delete {{.Name}}? Members are removed and its keys lose their team. Request logs are kept.">{{icon "trash-2"}} Delete forever</button></li>
+                {{else}}
+                  <li><button hx-get="/ui/teams/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+                  <li><button hx-get="/ui/teams/{{.ID}}/members/new" hx-target="#modal-body">{{icon "user-plus"}} Add member</button></li>
+                  {{if .Blocked}}<li><button hx-post="/ui/teams/{{.ID}}/unblock">{{icon "lock-open"}} Unblock</button></li>
+                  {{else}}<li><button hx-post="/ui/teams/{{.ID}}/block" hx-confirm="Block {{.Name}}? Every key belonging to the team will be rejected.">{{icon "ban"}} Block</button></li>{{end}}
+                  <li><button class="text-error" hx-post="/ui/teams/{{.ID}}/delete" hx-confirm="Delete {{.Name}}? You can restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button></li>
+                {{end}}
+              {{else if and (eq $role "team_admin") (not $p.ReadOnly)}}
+                <li><button hx-get="/ui/teams/{{.ID}}/members/new" hx-target="#modal-body">{{icon "user-plus"}} Add member</button></li>
+                <li><button hx-get="/ui/keys/new?team={{.ID}}" hx-target="#modal-body">{{icon "key-round"}} Create team key</button></li>
+              {{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Teams}} team{{if ne (len .Teams) 1}}s{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "team-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/teams"{{else}}hx-post="/ui/teams/{{.Team.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-3xl">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New team") (printf "Edit %s" .Team.Name)) "Sub" "Members and team keys share this budget, rate limits and model access." "Icon" "users"}}
+  <div class="flex flex-col gap-5 px-6 py-5" x-data="{adv: false}">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.Team.Name}}" class="input w-full" placeholder="e.g. ml-platform" maxlength="120" required>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Organization</legend>
+        <select name="org_id" class="select w-full">
+          <option value="">No organization</option>
+          {{$oid := deref .Team.OrgID}}
+          {{range .Orgs}}<option value="{{.ID}}" {{if eq .ID $oid}}selected{{end}}>{{.Name}}</option>{{end}}
+        </select>
+      </fieldset>
+      <fieldset class="fieldset sm:col-span-2">
+        <legend class="fieldset-legend">Description</legend>
+        <input name="description" value="{{.Team.Description}}" class="input w-full" placeholder="What this team uses the gateway for" maxlength="500">
+      </fieldset>
+    </div>
+
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Model access</legend>
+      {{template "model-picker" dict "Name" "models" "Options" .Models "Groups" .Groups "Selected" .Team.Models}}
+    </fieldset>
+
+    {{template "limit-fields" dict "MaxBudget" .Team.MaxBudget "BudgetPeriod" .Team.BudgetPeriod "RPM" .Team.RPMLimit "TPM" .Team.TPMLimit "Parallel" .Team.MaxParallel}}
+
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Default budget per member (USD)</legend>
+      <label class="input w-full sm:w-1/2">{{icon "user-round" "opacity-50"}}<input type="number" step="0.01" min="0" name="member_max_budget" value="{{val .Team.MemberMaxBudget}}" placeholder="Unlimited"></label>
+      <p class="label text-xs">Caps what each member can spend through team keys. Individual members can override it.</p>
+    </fieldset>
+
+    <button type="button" class="btn btn-ghost btn-sm self-start gap-2" @click="adv=!adv">
+      <span x-show="!adv">{{icon "chevron-right"}}</span><span x-show="adv" x-cloak>{{icon "chevron-down"}}</span> Advanced
+    </button>
+    <div x-show="adv" x-cloak class="flex flex-col gap-4">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Guardrail policies</legend>
+        {{if .Policies}}
+        <div class="flex flex-wrap gap-3">
+          {{$sel := .Team.Policies}}
+          {{range .Policies}}<label class="label cursor-pointer gap-2"><input type="checkbox" name="policies" value="{{.}}" class="checkbox checkbox-sm checkbox-primary" {{if has $sel .}}checked{{end}}><span class="text-sm">{{.}}</span></label>{{end}}
+        </div>
+        <p class="label text-xs">Every guardrail in a selected policy runs on this team's requests, in addition to default-on policies.</p>
+        {{else}}<p class="text-xs opacity-60">No policies yet — install a preset or create one under Guardrails.</p>{{end}}
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Guardrails</legend>
+        {{if .Guardrails}}
+        <div class="flex flex-wrap gap-3">
+          {{$sel := .Team.Guardrails}}
+          {{range .Guardrails}}<label class="label cursor-pointer gap-2"><input type="checkbox" name="guardrails" value="{{.}}" class="checkbox checkbox-sm" {{if has $sel .}}checked{{end}}><span class="text-sm">{{.}}</span></label>{{end}}
+        </div>
+        {{else}}<p class="text-xs opacity-60">No guardrails configured.</p>{{end}}
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">MCP servers</legend>
+        {{if .MCPServers}}
+        <div class="flex flex-wrap gap-3">
+          {{$sel := .Team.MCPServers}}
+          {{range .MCPServers}}<label class="label cursor-pointer gap-2"><input type="checkbox" name="mcp_servers" value="{{.}}" class="checkbox checkbox-sm" {{if has $sel .}}checked{{end}}><span class="text-sm">{{.}}</span></label>{{end}}
+        </div>
+        {{else}}<p class="text-xs opacity-60">No MCP servers registered.</p>{{end}}
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Metadata (JSON)</legend>
+        <textarea name="metadata" rows="3" class="textarea w-full font-mono text-xs" placeholder='{"cost_center": "R&D-42"}'>{{if .Team.Metadata}}{{pretty .Team.Metadata}}{{end}}</textarea>
+      </fieldset>
+      <label class="label cursor-pointer gap-3">
+        <input type="checkbox" name="blocked" class="toggle toggle-error toggle-sm" {{if .Team.Blocked}}checked{{end}}>
+        <span class="text-sm">Blocked — reject every request made with this team's keys</span>
+      </label>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create team") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "team-detail"}}
+{{$p := .P}}
+{{with .Data}}
+<div id="team-detail" hx-get="/ui/teams/{{.Team.ID}}?days={{.Days}}" hx-trigger="refresh-team from:body" hx-target="#team-detail" hx-swap="outerHTML" hx-select="#team-detail" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex items-center gap-4">
+      <div class="flex size-14 items-center justify-center rounded-2xl text-xl font-bold shadow-md {{if .Team.Blocked}}bg-error/15 text-error{{else}}brand-gradient text-primary-content{{end}}">{{initials .Team.Name}}</div>
+      <div>
+        <h1 class="page-title flex flex-wrap items-center gap-2">{{.Team.Name}}
+          {{if .Team.Blocked}}<span class="badge badge-error">blocked</span>{{end}}
+          {{if .Team.DeletedAt}}<span class="badge badge-ghost">deleted</span>{{end}}
+          {{if .MyRole}}{{template "role-badge" .MyRole}}{{end}}
+        </h1>
+        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm opacity-70">
+          {{if .Team.Description}}<span>{{.Team.Description}}</span>{{end}}
+          {{if .Team.OrgName}}<span class="flex items-center gap-1">{{icon "building-2"}}{{if $p.CanViewAll}}<a class="link" href="/ui/orgs/{{deref .Team.OrgID}}">{{deref .Team.OrgName}}</a>{{else}}{{deref .Team.OrgName}}{{end}}</span>{{end}}
+          <span>created {{ago .Team.CreatedAt}}</span>
+        </div>
+      </div>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      {{if .CanManage}}
+      <button class="btn btn-sm btn-primary gap-2" hx-get="/ui/keys/new?team={{.Team.ID}}" hx-target="#modal-body">{{icon "key-round"}} Create team key</button>
+      {{end}}
+      {{if and .IsAdmin (not .Team.DeletedAt)}}
+      <button class="btn btn-sm gap-2" hx-get="/ui/teams/{{.Team.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button>
+      {{if .Team.Blocked}}<button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/unblock">{{icon "lock-open"}} Unblock</button>
+      {{else}}<button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/block" hx-confirm="Block this team? Every team key will be rejected.">{{icon "ban"}} Block</button>{{end}}
+      <button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/reset-spend" hx-confirm="Reset this team's spend counter to $0?">{{icon "rotate-ccw"}} Reset spend</button>
+      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/teams/{{.Team.ID}}/delete?from=detail" hx-confirm="Delete this team? You can restore it from the Deleted tab.">{{icon "trash-2"}} Delete</button>
+      {{end}}
+      {{if and .IsAdmin .Team.DeletedAt}}
+      <button class="btn btn-sm gap-2" hx-post="/ui/teams/{{.Team.ID}}/restore">{{icon "rotate-ccw"}} Restore</button>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" (printf "Spend · %dd" .Days) "Value" (money .Totals.Cost) "Icon" "wallet" "Hint" (printf "%s current period" (money .Team.Spend))}}
+    {{template "stat" dict "Label" "Requests" "Value" (compact .Totals.Requests) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%.1f%% errors" .Totals.ErrorRate)}}
+    {{template "stat" dict "Label" "Tokens" "Value" (compact .Totals.Tokens) "Icon" "coins" "Tone" "accent" "Hint" (printf "%s in · %s out" (compact .Totals.PromptTokens) (compact .Totals.CompletionTokens))}}
+    {{template "stat" dict "Label" "People & keys" "Value" (printf "%d · %d" .Team.MemberCount .Team.KeyCount) "Icon" "users" "Tone" "info" "Hint" (printf "%s rpm · %d in flight" (num .RPM) .InFlight)}}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5 lg:col-span-2">
+      <div class="mb-4 flex items-center justify-between">
+        <h2 class="font-semibold">Daily spend</h2>
+        <div class="join">
+          {{range list 7 30 90}}<a href="/ui/teams/{{$.Data.Team.ID}}?days={{.}}" class="btn join-item btn-xs {{if eq . $.Data.Days}}btn-active{{end}}">{{.}}d</a>{{end}}
+        </div>
+      </div>
+      <div class="h-64"><canvas data-chart="{{json .Chart}}"></canvas></div>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-4 font-semibold">Budget &amp; limits</h2>
+      {{template "budget" dict "Spend" .Team.Spend "Max" .Team.MaxBudget "Period" .Team.BudgetPeriod}}
+      {{if .Team.BudgetResetAt}}<p class="mt-2 text-xs opacity-60">Resets {{ago .Team.BudgetResetAt}} ({{dt .Team.BudgetResetAt}})</p>{{end}}
+      <div class="divider my-3"></div>
+      <dl class="kv">
+        <dt>Per-member budget</dt><dd>{{if .Team.MemberMaxBudget}}{{money .Team.MemberMaxBudget}}{{else}}Unlimited{{end}}</dd>
+        <dt>Rate limits</dt>
+        <dd>{{if .Team.RPMLimit}}{{num (derefI .Team.RPMLimit)}} rpm{{else}}— rpm{{end}} · {{if .Team.TPMLimit}}{{compact (derefI .Team.TPMLimit)}} tpm{{else}}— tpm{{end}} · {{if .Team.MaxParallel}}{{derefI .Team.MaxParallel}} parallel{{else}}— parallel{{end}}</dd>
+        <dt>Guardrail policies</dt><dd>{{range .Team.Policies}}<span class="badge badge-sm badge-primary badge-soft mr-1">{{.}}</span>{{else}}Defaults{{end}}</dd>
+        <dt>Guardrails</dt><dd>{{range .Team.Guardrails}}<span class="badge badge-sm mr-1">{{.}}</span>{{else}}Defaults{{end}}</dd>
+        <dt>MCP servers</dt><dd>{{range .Team.MCPServers}}<span class="badge badge-sm mr-1">{{.}}</span>{{else}}—{{end}}</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="lg:col-span-2">
+      <div class="mb-3 flex items-center justify-between">
+        <h2 class="flex items-center gap-2 font-semibold">{{icon "users" "opacity-60"}} Members</h2>
+        {{if .CanManage}}<button class="btn btn-sm gap-2" hx-get="/ui/teams/{{.Team.ID}}/members/new" hx-target="#modal-body">{{icon "user-plus"}} Add member</button>{{end}}
+      </div>
+      <div id="team-members" hx-get="/ui/teams/{{.Team.ID}}/members" hx-trigger="load, refresh-members from:body">
+        <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 3}}<div class="skeleton h-10 w-full"></div>{{end}}</div></div>
+      </div>
+    </div>
+    <div class="flex flex-col gap-6">
+      <div class="glass-card p-5">
+        <h2 class="mb-4 font-semibold">Model access</h2>
+        {{if .Allowed}}
+          <div class="flex flex-wrap gap-1.5">{{range .Allowed}}<span class="badge badge-outline font-mono">{{.}}</span>{{end}}</div>
+        {{else if .AllModels}}<p class="text-sm">All models</p>
+        {{else}}<p class="text-sm text-warning">No models — organization and team restrictions leave nothing allowed.</p>{{end}}
+      </div>
+      <div class="glass-card p-5">
+        <h2 class="mb-4 font-semibold">Top models · {{.Days}}d</h2>
+        {{if .ByModel}}
+        <ul class="flex flex-col gap-3">
+          {{$max := (index .ByModel 0).Cost}}
+          {{range .ByModel}}
+            <li>
+              <div class="flex justify-between text-sm"><span class="font-mono text-xs">{{.Label}}</span><span class="tabular-nums">{{money .Cost}}</span></div>
+              <progress class="progress progress-primary h-1.5 w-full" value="{{if gt $max 0.0}}{{divf .Cost $max}}{{else}}0{{end}}" max="1"></progress>
+              <div class="text-[11px] opacity-50">{{compact .Requests}} requests · {{compact .Tokens}} tokens</div>
+            </li>
+          {{end}}
+        </ul>
+        {{else}}<p class="text-sm opacity-60">No traffic in this period.</p>{{end}}
+      </div>
+    </div>
+  </div>
+
+  <div class="mt-6">
+    <div class="mb-3 flex items-center justify-between">
+      <h2 class="flex items-center gap-2 font-semibold">{{icon "key-round" "opacity-60"}} Team keys</h2>
+      <a href="/ui/logs?team={{.Team.ID}}" class="btn btn-ghost btn-sm gap-2">{{icon "scroll-text"}} Request logs {{icon "arrow-right"}}</a>
+    </div>
+    <div id="team-keys" hx-get="/ui/teams/{{.Team.ID}}/keys" hx-trigger="load, refresh-keys from:body">
+      <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 2}}<div class="skeleton h-10 w-full"></div>{{end}}</div></div>
+    </div>
+  </div>
+
+  {{if .Team.Metadata}}
+  <div class="glass-card mt-6 p-5">
+    <h2 class="mb-3 font-semibold">Metadata</h2>
+    <pre class="mono overflow-x-auto rounded-field bg-base-200 p-3">{{pretty .Team.Metadata}}</pre>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "team-members"}}
+{{with .Data}}
+{{if not .Members}}
+  <div class="glass-card">{{template "empty" dict "Icon" "user-plus" "Title" "No members yet" "Body" "Add people by email. Team admins can manage members and create team keys."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Member</th><th>Role</th><th>Spend</th><th>Joined</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Members}}
+      {{$max := .MaxBudget}}{{if isNil $max}}{{$max = $.Data.Team.MemberMaxBudget}}{{end}}
+      <tr>
+        <td>
+          <div class="flex items-center gap-3">
+            <div class="avatar avatar-placeholder"><div class="w-8 rounded-full bg-base-300 text-xs font-semibold"><span>{{initials (or .Name .Email)}}</span></div></div>
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium">{{or .Name .Email}}{{if eq .UserID $.Data.SelfID}} <span class="badge badge-ghost badge-xs">you</span>{{end}}</div>
+              {{if .Name}}<div class="truncate text-xs opacity-60">{{.Email}}</div>{{end}}
+            </div>
+          </div>
+        </td>
+        <td>{{template "role-badge" .Role}}</td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" $max}}{{if .MaxBudget}}<div class="text-[10px] opacity-50">custom cap</div>{{end}}</td>
+        <td class="text-xs opacity-70">{{ago .JoinedAt}}</td>
+        <td class="text-right">
+          {{if $.Data.CanManage}}
+          <div class="flex justify-end gap-1">
+            <button class="btn btn-ghost btn-xs btn-square" title="Edit member" hx-get="/ui/teams/{{$.Data.Team.ID}}/members/{{.UserID}}/edit" hx-target="#modal-body">{{icon "pencil"}}</button>
+            <button class="btn btn-ghost btn-xs btn-square text-error" title="Remove" hx-post="/ui/teams/{{$.Data.Team.ID}}/members/{{.UserID}}/remove" hx-confirm="Remove {{.Email}} from {{$.Data.Team.Name}}? Their personal keys are unaffected.">{{icon "user-minus"}}</button>
+          </div>
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "member-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/teams/{{.Team.ID}}/members"{{else}}hx-post="/ui/teams/{{.Team.ID}}/members/{{.Member.UserID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add member") "Edit member") "Sub" (printf "Team %s" .Team.Name) "Icon" "user-plus"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Email</legend>
+      {{if .IsNew}}
+      <label class="input w-full">{{icon "mail" "opacity-50"}}<input type="email" name="email" value="{{.Member.Email}}" list="member-emails" placeholder="person@example.com" required autocomplete="off"></label>
+      {{if .Emails}}<datalist id="member-emails">{{range .Emails}}<option value="{{.}}">{{end}}</datalist>{{end}}
+      <p class="label text-xs">The person must already have a user account.</p>
+      {{else}}
+      <input class="input w-full" value="{{.Member.Email}}" disabled>
+      {{end}}
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Team role</legend>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <label class="flex cursor-pointer gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="role" value="team_member" class="radio radio-sm radio-primary" {{if ne .Member.Role "team_admin"}}checked{{end}}>
+          <span><span class="block text-sm font-medium">Team member</span><span class="text-xs opacity-60">Uses team models and sees team keys</span></span>
+        </label>
+        <label class="flex cursor-pointer gap-3 rounded-box border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="role" value="team_admin" class="radio radio-sm radio-primary" {{if eq .Member.Role "team_admin"}}checked{{end}}>
+          <span><span class="block text-sm font-medium">Team admin</span><span class="text-xs opacity-60">Manages members and team keys</span></span>
+        </label>
+      </div>
+    </fieldset>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Member budget (USD)</legend>
+      <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.01" min="0" name="max_budget" value="{{val .Member.MaxBudget}}" placeholder="{{if .Team.MemberMaxBudget}}Team default: {{money .Team.MemberMaxBudget}}{{else}}Unlimited{{end}}"></label>
+      <p class="label text-xs">Optional cap on this member's spend through team keys.</p>
+    </fieldset>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Add member") "Save")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "team-keys"}}
+{{with .Data}}
+{{if not .Keys}}
+  <div class="glass-card">
+    {{template "empty" dict "Icon" "key-round" "Title" "No team keys" "Body" "Team keys draw on the team's budget and model access."}}
+    {{if .CanCreate}}<div class="-mt-8 flex justify-center pb-8"><button class="btn btn-primary btn-sm gap-2" hx-get="/ui/keys/new?team={{.Team.ID}}" hx-target="#modal-body">{{icon "plus"}} Create team key</button></div>{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Key</th><th>Owner</th><th>Models</th><th>Spend</th><th>Last used</th></tr></thead>
+    <tbody>
+    {{range .Keys}}
+      <tr>
+        <td>
+          <a href="/ui/keys/{{.ID}}" class="group flex items-center gap-3">
+            <div class="flex size-8 items-center justify-center rounded-lg {{if .Blocked}}bg-error/15 text-error{{else if .Expired}}bg-warning/20 text-warning{{else}}bg-primary/25{{end}}">{{icon "key-round"}}</div>
+            <div>
+              <div class="text-sm font-semibold group-hover:underline">{{if .Alias}}{{.Alias}}{{else}}<span class="opacity-60">Untitled key</span>{{end}}</div>
+              <div class="mono opacity-60">{{.KeyHint}}</div>
+            </div>
+          </a>
+        </td>
+        <td class="text-sm">{{if .UserEmail}}{{deref .UserEmail}}{{else}}<span class="opacity-50">service key</span>{{end}}</td>
+        <td>{{template "chips" dict "Models" .Models "Empty" "Team models"}}</td>
+        <td>{{template "budget" dict "Spend" .Spend "Max" .MaxBudget "Period" .BudgetPeriod}}</td>
+        <td class="text-xs">{{ago .LastUsedAt}}{{if .Blocked}} <span class="badge badge-error badge-xs">blocked</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}

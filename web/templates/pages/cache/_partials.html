@@ -1,0 +1,60 @@
+{{define "cache-stats"}}
+{{with .Data}}
+{{if not .Enabled}}
+<div role="alert" class="alert alert-warning alert-soft mb-4 text-sm">{{icon "triangle-alert"}}<span>The response cache is <strong>disabled</strong>. Requests are not looked up or stored. Enable it in the settings below.</span></div>
+{{end}}
+<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{template "stat" dict "Label" "Hit rate" "Value" (printf "%.1f%%" .HitRate) "Icon" "percent" "Tone" "success" "Hint" (printf "since %s" (ago .Since))}}
+  {{template "stat" dict "Label" "Lookups" "Value" (compact .Lookups) "Icon" "activity" "Tone" "secondary" "Hint" (printf "hits %s · misses %s" (compact .Hits) (compact .Misses))}}
+  <div class="stat-tile card-hover">
+    <div class="flex items-center justify-between"><span class="label">Entries</span><span class="flex size-8 items-center justify-center rounded-xl bg-info/15 text-info">{{icon "database-zap"}}</span></div>
+    <span class="value">{{num .Entries}}</span>
+    <progress class="progress progress-info h-1.5 w-full" value="{{.Fill}}" max="100"></progress>
+    <span class="text-xs opacity-60">of {{num .MaxEntries}} · {{compact .Evictions}} evicted</span>
+  </div>
+  {{template "stat" dict "Label" "Memory" "Value" (.Size .Bytes) "Icon" "hard-drive" "Tone" "accent" "Hint" (printf "%s responses stored" (compact .Sets))}}
+</div>
+
+<div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-5">
+  <div class="glass-card p-5 lg:col-span-2">
+    <h2 class="mb-4 font-semibold">By model</h2>
+    {{if .Models}}
+    <ul class="flex flex-col gap-3">
+      {{range .Models}}
+      <li>
+        <div class="flex items-baseline justify-between gap-2 text-sm">
+          <span class="truncate font-mono text-xs">{{or .Model "—"}}</span>
+          <span class="tabular-nums">{{printf "%.0f%%" .HitRate}}</span>
+        </div>
+        <progress class="progress progress-success h-1.5 w-full" value="{{.HitRate}}" max="100"></progress>
+        <div class="text-[11px] opacity-50">hits {{compact .Hits}} · misses {{compact .Misses}} · entries {{.Entries}} · {{$.Data.Size .Bytes}}</div>
+      </li>
+      {{end}}
+    </ul>
+    {{else}}<p class="text-sm opacity-60">No cache lookups yet.</p>{{end}}
+  </div>
+  <div class="glass-card p-5 lg:col-span-3">
+    <h2 class="mb-4 font-semibold">Recent entries</h2>
+    {{if .Recent}}
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead><tr><th>Model</th><th>Route</th><th class="text-right">Size</th><th class="text-right">Hits</th><th>Stored</th><th>Expires</th></tr></thead>
+        <tbody>
+        {{range .Recent}}
+          <tr>
+            <td class="font-mono text-xs">{{.Model}}</td>
+            <td class="text-xs opacity-70">{{.Route}}</td>
+            <td class="text-right text-xs tabular-nums">{{$.Data.Size .Bytes}}</td>
+            <td class="text-right tabular-nums">{{if .Hits}}<span class="badge badge-success badge-soft badge-sm">{{.Hits}}</span>{{else}}<span class="opacity-40">0</span>{{end}}</td>
+            <td class="whitespace-nowrap text-xs">{{ago .Created}}</td>
+            <td class="whitespace-nowrap text-xs opacity-70">{{ago .Expires}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </div>
+    {{else}}{{template "empty" dict "Icon" "database-zap" "Title" "Cache is empty" "Body" "Responses appear here after the first cacheable request."}}{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}

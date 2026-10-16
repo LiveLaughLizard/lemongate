@@ -1,0 +1,49 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "MCP servers" "Sub" "Aggregate upstream MCP servers behind one authenticated endpoint. Tools appear to clients as server__tool." "Icon" "plug-zap"}}
+  {{if .IsAdmin}}
+  <button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/mcp/new" hx-target="#modal-body">{{icon "plus"}} Add server</button>
+  {{end}}
+</div>
+
+<div id="mcp-servers" hx-get="/ui/mcp/servers" hx-trigger="load, refresh-mcp from:body">
+  <div class="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">{{range seq 4}}<div class="skeleton h-24 w-full"></div>{{end}}</div>
+  <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{{range seq 3}}<div class="skeleton h-56 w-full"></div>{{end}}</div>
+</div>
+
+<div class="mt-8 grid grid-cols-1 gap-6 xl:grid-cols-5">
+  <section class="min-w-0 xl:col-span-3">
+    <div class="mb-3 flex flex-col gap-3">
+      <h2 class="flex shrink-0 items-center gap-2 whitespace-nowrap text-lg font-semibold">{{icon "activity" "opacity-60"}} Recent tool calls</h2>
+      <form id="mcp-call-filters" class="flex flex-wrap gap-2" hx-get="/ui/mcp/calls" hx-target="#mcp-calls" hx-trigger="input changed delay:300ms from:input, change from:select">
+        <label class="input input-sm w-36">{{icon "search" "opacity-50"}}<input type="search" name="tool" placeholder="Tool…"></label>
+        <select name="server" class="select select-sm w-36">
+          <option value="">All servers</option>
+          {{range .Servers}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+        <select name="status" class="select select-sm w-32">
+          <option value="">Any status</option>
+          <option value="ok">Succeeded</option>
+          <option value="error">Failed</option>
+        </select>
+        <select name="range" class="select select-sm w-32">
+          <option value="1h">Last hour</option>
+          <option value="24h" selected>Last 24h</option>
+          <option value="7d">Last 7 days</option>
+          <option value="30d">Last 30 days</option>
+        </select>
+      </form>
+    </div>
+    <div id="mcp-calls" hx-get="/ui/mcp/calls" hx-trigger="load, refresh-mcp-calls from:body" hx-include="#mcp-call-filters">
+      <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 4}}<div class="skeleton h-8 w-full"></div>{{end}}</div></div>
+    </div>
+  </section>
+
+  <section class="min-w-0 xl:col-span-2">
+    <h2 class="mb-3 flex items-center gap-2 text-lg font-semibold">{{icon "cable" "opacity-60"}} Connect a client</h2>
+    {{template "mcp-connect" .}}
+  </section>
+</div>
+{{end}}
+{{end}}

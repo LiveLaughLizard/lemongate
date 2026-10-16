@@ -1,0 +1,40 @@
+# LemonGate configuration. Models declared here are read-only in the console;
+# models added through the console are stored in Postgres. ${VAR} and ${VAR:-default}
+# are expanded from the environment.
+
+models:
+  - name: llama-3.1-8b                  # public model name clients request
+    api_base: http://localhost:8001/v1  # vLLM OpenAI-compatible base URL
+    upstream_model: mock-llama          # the --served-model-name on the vLLM server
+    api_key: ${VLLM_API_KEY:-}          # optional, if vLLM was started with --api-key
+    context_window: 8192
+    input_cost_per_m: 0.10              # USD per 1M prompt tokens (for internal chargeback)
+    output_cost_per_m: 0.20
+    description: Fast general-purpose chat model
+    tags: [chat, general]
+  - name: llama-3.1-8b                  # second replica: same name = same model group
+    api_base: http://localhost:8002/v1
+    upstream_model: mock-llama
+    context_window: 8192
+    input_cost_per_m: 0.10
+    output_cost_per_m: 0.20
+  - name: bge-m3
+    api_base: http://localhost:8001/v1
+    upstream_model: mock-embed
+    mode: embedding
+    input_cost_per_m: 0.01
+
+aliases:
+  default: llama-3.1-8b
+
+fallbacks:
+  llama-3.1-8b: [bge-m3]
+
+access_groups:
+  starter: [llama-3.1-8b]
+
+# Optional overrides for runtime settings (these win over values saved in the console).
+settings:
+  routing:
+    strategy: least_busy
+    num_retries: 2

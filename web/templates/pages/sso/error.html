@@ -1,0 +1,17 @@
+{{define "content"}}
+{{with .Data}}
+<div class="flex flex-col items-center text-center">
+  <div class="relative mb-4">
+    <div class="absolute inset-0 rounded-full bg-error/25 blur-xl"></div>
+    <div class="relative flex size-14 items-center justify-center rounded-2xl border border-base-300 bg-base-100 text-error shadow-sm">{{icon "shield-alert" "text-2xl"}}</div>
+  </div>
+  <h2 class="text-xl font-semibold">{{.Heading}}</h2>
+  <p class="mt-2 text-sm opacity-70">{{.Message}}</p>
+  {{if .Detail}}<pre class="mono mt-4 w-full overflow-x-auto whitespace-pre-wrap rounded-field bg-base-200 p-3 text-left text-xs opacity-80">{{.Detail}}</pre>{{end}}
+  <div class="mt-6 flex w-full flex-col gap-2">
+    <a href="/ui/sso/login" class="btn btn-neutral w-full gap-2">{{icon "rotate-ccw"}} Try single sign-on again</a>
+    <a href="/ui/login" class="btn btn-ghost w-full gap-2">{{icon "log-in"}} Other sign-in options</a>
+  </div>
+</div>
+{{end}}
+{{end}}

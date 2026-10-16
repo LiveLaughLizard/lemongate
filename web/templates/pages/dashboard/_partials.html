@@ -1,0 +1,125 @@
+{{/* KPI tile with delta and sparkline: dashboard.KPI */}}
+{{define "dash-kpi"}}
+<div class="stat-tile card-hover relative overflow-hidden">
+  <div class="flex items-center justify-between">
+    <span class="label">{{.Label}}</span>
+    <span class="flex size-8 items-center justify-center rounded-xl {{if eq .Tone "secondary"}}bg-secondary/20 text-secondary{{else if eq .Tone "accent"}}bg-accent/15 text-accent{{else if eq .Tone "info"}}bg-info/15 text-info{{else if eq .Tone "error"}}bg-error/15 text-error{{else if eq .Tone "success"}}bg-success/15 text-success{{else}}bg-primary/25 text-base-content{{end}}">{{icon .Icon}}</span>
+  </div>
+  <div class="flex items-end justify-between gap-2">
+    <span class="value whitespace-nowrap">{{.Value}}</span>
+    {{if .HasDelta}}
+      <span class="badge badge-sm gap-0.5 border-0 font-semibold tabular-nums {{if .Good}}bg-success/15 text-success{{else}}bg-error/15 text-error{{end}}" title="vs previous period">
+        {{if ge .Delta 0.0}}{{icon "trending-up"}}{{else}}{{icon "trending-down"}}{{end}}{{printf "%.0f" .Delta}}%
+      </span>
+    {{else}}<span class="text-[11px] opacity-40">no prior data</span>{{end}}
+  </div>
+  <span class="text-xs opacity-60">{{.Hint}}</span>
+  {{if .Spark}}
+  <svg viewBox="0 0 100 32" preserveAspectRatio="none" class="pointer-events-none mt-2 h-8 w-full {{if eq .Tone "secondary"}}text-secondary{{else if eq .Tone "accent"}}text-accent{{else if eq .Tone "info"}}text-info{{else if eq .Tone "error"}}text-error{{else if eq .Tone "success"}}text-success{{else}}text-warning{{end}}" aria-hidden="true">
+    {{if .Area}}<path d="{{.Area}}" fill="currentColor" opacity="0.12"></path>{{end}}
+    <path d="{{.Spark}}" fill="none" stroke="currentColor" stroke-width="1.6" vector-effect="non-scaling-stroke" stroke-linejoin="round" stroke-linecap="round"></path>
+  </svg>
+  {{end}}
+</div>
+{{end}}
+
+{{/* Top spender table: dict "Rows" []Budgeted "Kind" "key"|"team" "Days" int */}}
+{{define "dash-top"}}
+{{if .Rows}}
+<ul class="divide-y divide-base-300/60">
+  {{range $i, $r := .Rows}}
+  <li class="flex items-center gap-3 py-3">
+    <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-base-200 text-xs font-bold tabular-nums opacity-70">{{add $i 1}}</span>
+    <div class="min-w-0 flex-1">
+      {{if $r.Href}}<a href="{{$r.Href}}" class="block truncate text-sm font-semibold hover:underline">{{$r.Label}}</a>{{else}}<span class="block truncate text-sm font-semibold opacity-60">{{$r.Label}}</span>{{end}}
+      <div class="flex items-center gap-2 text-[11px] opacity-60">
+        <span class="truncate">{{$r.Sub}}</span>
+        <span>·</span><span class="shrink-0">{{compact $r.Requests}} req</span>
+      </div>
+      <div class="mt-1.5 h-1 w-full overflow-hidden rounded-full bg-base-200"><div class="brand-gradient h-full rounded-full" style="width: {{printf "%.1f" $r.Share}}%"></div></div>
+    </div>
+    <div class="w-40 shrink-0 text-right">
+      <div class="text-sm font-semibold tabular-nums">{{money $r.Cost}}</div>
+      {{$bp := pct $r.Spend $r.Max}}
+      {{if ge $bp 0.0}}
+        <div class="mt-1 truncate text-[11px] tabular-nums opacity-60" title="Current budget period spend">{{money $r.Spend}} of {{money $r.Max}}{{if $r.Period}}<span class="opacity-70"> · {{$r.Period}}</span>{{end}}</div>
+        <progress class="progress {{pctClass $bp}} h-1 w-full" value="{{$bp}}" max="100"></progress>
+      {{else}}<div class="mt-1 text-[11px] opacity-40">no budget</div>{{end}}
+    </div>
+  </li>
+  {{end}}
+</ul>
+{{else}}
+<div class="flex flex-col items-center gap-2 py-10 text-center text-sm opacity-60">
+  {{icon (or .Icon "inbox") "text-2xl"}}
+  <span>No {{.Kind}} traffic in the last {{.Days}} days.</span>
+</div>
+{{end}}
+{{end}}
+
+{{/* Live deployment health strip: dashboard.healthData */}}
+{{define "health-strip"}}
+{{with .Data}}
+<div id="health-strip" hx-get="/ui/dashboard/health" hx-trigger="every 10s [document.visibilityState === 'visible']" hx-swap="outerHTML" hx-disinherit="*">
+  <div class="mb-3 flex items-center justify-between">
+    <div class="flex items-center gap-2">
+      <h2 class="font-semibold">Deployment health</h2>
+      {{if .Total}}<span class="badge badge-sm {{if eq .Healthy .Total}}badge-success badge-soft{{else}}badge-warning badge-soft{{end}}">{{.Healthy}}/{{.Total}} serving</span>{{end}}
+    </div>
+    <span class="flex items-center gap-1.5 text-[11px] opacity-50"><span class="relative flex size-1.5"><span class="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-70"></span><span class="relative inline-flex size-1.5 rounded-full bg-success"></span></span>live · refreshes every 10s</span>
+  </div>
+  {{if .Deployments}}
+  <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+    {{range .Deployments}}
+    <div class="glass-card card-hover flex flex-col gap-2 p-4 {{if eq .Status "unhealthy"}}border-error/40{{else if eq .Status "cooldown"}}border-warning/50{{end}}">
+      <div class="flex items-start justify-between gap-2">
+        <div class="min-w-0">
+          <div class="truncate font-mono text-sm font-semibold">{{.Model}}</div>
+          <div class="truncate text-[11px] opacity-50" title="{{if $.Data.ShowBase}}{{.APIBase}}{{end}}">{{if $.Data.ShowBase}}{{.APIBase}}{{else}}{{.Upstream}}{{end}}</div>
+        </div>
+        {{if not .Enabled}}<span class="badge badge-ghost badge-sm">disabled</span>{{else}}{{template "health-dot" .Status}}{{end}}
+      </div>
+      <div class="grid grid-cols-3 gap-2 text-center">
+        <div class="rounded-field bg-base-200/60 px-1 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider opacity-50">Latency</div>
+          <div class="text-xs font-semibold tabular-nums">{{if gt .LatencyMs 0.0}}{{num .LatencyMs}} ms{{else if .ProbeMs}}{{.ProbeMs}} ms{{else}}—{{end}}</div>
+        </div>
+        <div class="rounded-field bg-base-200/60 px-1 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider opacity-50">In flight</div>
+          <div class="text-xs font-semibold tabular-nums">{{.InFlight}}</div>
+        </div>
+        <div class="rounded-field bg-base-200/60 px-1 py-1.5">
+          <div class="text-[10px] uppercase tracking-wider opacity-50">This min</div>
+          <div class="text-xs font-semibold tabular-nums">{{.RPM}} req</div>
+        </div>
+      </div>
+      {{if .CooldownIn}}<div class="flex items-center gap-1.5 text-[11px] text-warning">{{icon "snowflake"}} cooling down · {{.CooldownIn}} left</div>
+      {{else if and .Error (eq .Status "unhealthy")}}<div class="truncate text-[11px] text-error" title="{{.Error}}">{{icon "circle-alert"}} {{.Error}}</div>
+      {{else if not .Checked.IsZero}}<div class="text-[11px] opacity-50">probed {{ago .Checked}}</div>
+      {{else}}<div class="text-[11px] opacity-40">awaiting first probe</div>{{end}}
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <div class="glass-card">{{template "empty" dict "Icon" "server" "Title" "No deployments yet" "Body" "Add a vLLM deployment to start routing traffic."}}</div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "dash-step"}}
+{{if not .Hide}}
+<li class="relative flex flex-col gap-2 rounded-box border p-4 transition {{if .Done}}border-success/40 bg-success/5{{else}}border-base-300 bg-base-100/70 hover:border-primary/60{{end}}">
+  <div class="flex items-center gap-3">
+    {{if .Done}}
+      <span class="flex size-8 items-center justify-center rounded-full bg-success text-success-content">{{icon "check"}}</span>
+    {{else}}
+      <span class="brand-gradient flex size-8 items-center justify-center rounded-full text-sm font-bold text-primary-content">{{.N}}</span>
+    {{end}}
+    <span class="font-semibold {{if .Done}}line-through opacity-60{{end}}">{{.Title}}</span>
+  </div>
+  <p class="text-xs opacity-60">{{.Body}}</p>
+  {{if not .Done}}<a href="{{.Href}}" class="btn btn-primary btn-sm mt-1 gap-2 self-start">{{icon .Icon}} {{.Cta}}</a>{{end}}
+</li>
+{{end}}
+{{end}}

@@ -1,0 +1,29 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "API keys" "Sub" "Virtual keys authenticate clients and carry their own models, budgets and rate limits." "Icon" "key-round"}}
+  {{if .CanCreate}}
+  <button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/keys/new" hx-target="#modal-body">{{icon "plus"}} Create key</button>
+  {{end}}
+</div>
+
+<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+  <form id="key-filters" class="flex flex-1 flex-col gap-3 sm:flex-row" hx-get="/ui/keys/table" hx-target="#keys-table" hx-trigger="input changed delay:300ms from:input, change from:select">
+    <label class="input w-full sm:max-w-sm">{{icon "search" "opacity-50"}}<input type="search" name="q" placeholder="Search alias, key, owner or team…"></label>
+    <select name="team" class="select w-full sm:w-56">
+      <option value="">All teams</option>
+      {{range .Teams}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select>
+    <input type="hidden" name="deleted" value="{{if .Deleted}}1{{end}}">
+  </form>
+  <div role="tablist" class="tabs tabs-box tabs-sm">
+    <a role="tab" href="/ui/keys" class="tab {{if not .Deleted}}tab-active{{end}}">Active</a>
+    <a role="tab" href="/ui/keys?deleted=1" class="tab {{if .Deleted}}tab-active{{end}}">Deleted</a>
+  </div>
+</div>
+
+<div id="keys-table" hx-get="/ui/keys/table{{if .Deleted}}?deleted=1{{end}}" hx-trigger="load, refresh-keys from:body" hx-include="#key-filters">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 5}}<div class="skeleton h-10 w-full"></div>{{end}}</div></div>
+</div>
+{{end}}
+{{end}}

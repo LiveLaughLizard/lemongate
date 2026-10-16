@@ -1,0 +1,159 @@
+@import "tailwindcss";
+@source "../templates";
+@source "../static/js";
+@source "../../internal";
+
+@plugin "daisyui" {
+  themes: lemon --default, lemon-night --prefersdark;
+}
+
+@plugin "daisyui/theme" {
+  name: "lemon";
+  default: true;
+  color-scheme: light;
+  --color-base-100: oklch(99% 0.006 100);
+  --color-base-200: oklch(97% 0.012 100);
+  --color-base-300: oklch(92% 0.02 100);
+  --color-base-content: oklch(24% 0.03 260);
+  --color-primary: oklch(86% 0.18 98);
+  --color-primary-content: oklch(28% 0.06 90);
+  --color-secondary: oklch(72% 0.18 135);
+  --color-secondary-content: oklch(22% 0.05 135);
+  --color-accent: oklch(68% 0.16 45);
+  --color-accent-content: oklch(98% 0.01 45);
+  --color-neutral: oklch(28% 0.03 260);
+  --color-neutral-content: oklch(96% 0.01 100);
+  --color-info: oklch(70% 0.13 235);
+  --color-info-content: oklch(20% 0.04 235);
+  --color-success: oklch(70% 0.16 150);
+  --color-success-content: oklch(20% 0.05 150);
+  --color-warning: oklch(78% 0.16 70);
+  --color-warning-content: oklch(25% 0.05 70);
+  --color-error: oklch(64% 0.21 25);
+  --color-error-content: oklch(98% 0.01 25);
+  --radius-selector: 0.75rem;
+  --radius-field: 0.6rem;
+  --radius-box: 1.1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@plugin "daisyui/theme" {
+  name: "lemon-night";
+  prefersdark: true;
+  color-scheme: dark;
+  --color-base-100: oklch(21% 0.018 265);
+  --color-base-200: oklch(18% 0.016 265);
+  --color-base-300: oklch(27% 0.02 265);
+  --color-base-content: oklch(93% 0.012 100);
+  --color-primary: oklch(88% 0.18 100);
+  --color-primary-content: oklch(24% 0.05 95);
+  --color-secondary: oklch(76% 0.17 135);
+  --color-secondary-content: oklch(20% 0.04 135);
+  --color-accent: oklch(72% 0.15 45);
+  --color-accent-content: oklch(18% 0.03 45);
+  --color-neutral: oklch(30% 0.02 265);
+  --color-neutral-content: oklch(92% 0.01 100);
+  --color-info: oklch(72% 0.12 235);
+  --color-info-content: oklch(18% 0.03 235);
+  --color-success: oklch(72% 0.15 150);
+  --color-success-content: oklch(18% 0.04 150);
+  --color-warning: oklch(80% 0.15 75);
+  --color-warning-content: oklch(22% 0.04 75);
+  --color-error: oklch(68% 0.19 25);
+  --color-error-content: oklch(18% 0.03 25);
+  --radius-selector: 0.75rem;
+  --radius-field: 0.6rem;
+  --radius-box: 1.1rem;
+  --size-selector: 0.25rem;
+  --size-field: 0.25rem;
+  --border: 1px;
+  --depth: 1;
+  --noise: 0;
+}
+
+@font-face {
+  font-family: "Inter Variable";
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url("/static/dist/fonts/inter.woff2") format("woff2");
+}
+
+@theme {
+  --font-sans: "Inter Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SFMono-Regular", Menlo, monospace;
+}
+
+@layer base {
+  html { font-feature-settings: "cv02", "cv03", "cv04", "cv11"; }
+  body { @apply bg-base-200 text-base-content antialiased; }
+  [x-cloak] { display: none !important; }
+  ::selection { background: color-mix(in oklch, var(--color-primary) 55%, transparent); }
+}
+
+@utility glass-card {
+  @apply rounded-box border border-base-300/70 bg-base-100/80 shadow-sm backdrop-blur;
+}
+
+@layer components {
+  .lg-icon { @apply inline-block shrink-0; width: 1.1em; height: 1.1em; }
+  .lg-icon svg { width: 100%; height: 100%; stroke-width: 2; }
+
+  .card-hover { @apply transition duration-200 hover:-translate-y-0.5 hover:shadow-lg hover:border-primary/40; }
+
+  .brand-gradient {
+    background-image: linear-gradient(120deg, var(--color-primary), var(--color-secondary));
+  }
+  .brand-text {
+    @apply bg-clip-text text-transparent;
+    background-image: linear-gradient(100deg, oklch(70% 0.17 95), var(--color-secondary));
+  }
+  .hero-glow {
+    background:
+      radial-gradient(60rem 30rem at 10% -10%, color-mix(in oklch, var(--color-primary) 30%, transparent), transparent 60%),
+      radial-gradient(50rem 30rem at 110% 10%, color-mix(in oklch, var(--color-secondary) 22%, transparent), transparent 60%);
+  }
+  .stat-tile { @apply glass-card p-5 flex flex-col gap-1; }
+  .stat-tile .label { @apply text-xs font-medium uppercase tracking-wider opacity-60; }
+  .stat-tile .value { @apply text-2xl font-semibold tabular-nums; }
+
+  .page-title { @apply text-2xl font-semibold tracking-tight; }
+  .page-sub { @apply text-sm opacity-60; }
+
+  .nav-link { @apply flex items-center gap-3 rounded-field px-3 py-2 text-sm font-medium opacity-80 transition hover:bg-base-200 hover:opacity-100; }
+  .nav-link.active { @apply bg-primary/20 text-base-content opacity-100 ring-1 ring-primary/40; }
+  .nav-heading { @apply px-3 pt-4 pb-1 text-[0.68rem] font-semibold uppercase tracking-widest opacity-40; }
+
+  .table-lg-wrap { @apply glass-card overflow-x-auto; }
+  .table-lg-wrap table { @apply table table-sm; }
+  .table-lg-wrap thead th { @apply bg-base-200/60 text-xs uppercase tracking-wider font-semibold opacity-70; }
+  .table-lg-wrap tbody tr { @apply hover:bg-base-200/50 transition-colors; }
+
+  .mono { @apply font-mono text-xs; }
+  .kv dt { @apply text-xs uppercase tracking-wider opacity-50; }
+  .kv dd { @apply text-sm font-medium mb-3; }
+
+  .htmx-indicator { opacity: 0; transition: opacity 150ms; }
+  .htmx-request .htmx-indicator, .htmx-request.htmx-indicator { opacity: 1; }
+
+  .chat-md pre { @apply bg-base-300/60 rounded-field p-3 overflow-x-auto text-xs my-2; }
+  .chat-md code { @apply font-mono text-[0.85em]; }
+}
+
+/* Unlayered on purpose: these must beat daisyUI's layered component styles.
+   A fieldset is a grid whose single column would otherwise size to its widest
+   no-wrap child (help text), pushing inputs past the edge of modals and cards. */
+.fieldset { min-width: 0; grid-template-columns: minmax(0, 1fr); }
+/* daisyUI labels never wrap, so one long toggle/checkbox caption sets the width of the
+   whole form. Let them wrap like normal text. */
+.label { white-space: normal; }
+.label > span, .label > div { min-width: 0; }
+/* Content inside modals must never be wider than the modal: code scrolls in place,
+   long tokens break, tables scroll in their own wrapper. */
+#modal-body pre, #modal-body .mockup-code { max-width: 100%; overflow-x: auto; }
+#modal-body code, #modal-body .mono { overflow-wrap: anywhere; }
+#modal-body pre code { overflow-wrap: normal; }

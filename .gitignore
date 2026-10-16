@@ -1,0 +1,10 @@
+PLAN.md
+/bin/
+/web/node_modules/
+/web/static/dist/*
+!/web/static/dist/.gitkeep
+*.local.yaml
+.env
+/tmp/
+.env.dev
+/e2e/node_modules/

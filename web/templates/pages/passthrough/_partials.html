@@ -1,0 +1,203 @@
+{{define "routes-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "route" "Title" "No pass-through routes" "Body" "Forward /pt/<name>/* to any internal HTTP service — vLLM admin endpoints, tokenizers, retrievers — behind LemonGate keys."}}
+  {{if .CanEdit}}<div class="-mt-6 flex justify-center pb-10"><button class="btn btn-primary btn-sm gap-2" hx-get="/ui/passthrough/new" hx-target="#modal-body">{{icon "plus"}} Create a route</button></div>{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Route</th><th>Public URL</th><th>Target</th><th>Auth</th><th>24h</th><th class="text-center">Enabled</th><th></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr class="{{if not .Enabled}}opacity-60{{end}}">
+        <td>
+          <div class="flex items-center gap-3">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-xl bg-primary/25">{{icon "route"}}</div>
+            <div class="min-w-0">
+              <div class="font-semibold">{{.Name}}</div>
+              {{if .Description}}<div class="text-xs opacity-60">{{truncate .Description 60}}</div>{{end}}
+            </div>
+          </div>
+        </td>
+        <td>
+          <div class="flex items-center gap-1">
+            <span class="mono text-xs">{{.URL}}</span>
+            <button type="button" class="btn btn-ghost btn-xs btn-square" title="Copy URL" onclick="lgCopy({{.URL}})">{{icon "copy"}}</button>
+          </div>
+        </td>
+        <td><span class="mono break-all text-xs opacity-75">{{.TargetURL}}</span></td>
+        <td class="text-xs">
+          <div class="flex flex-col gap-1">
+            {{if .RequireKey}}<span class="badge badge-sm badge-success badge-soft gap-1">{{icon "key-round"}} key required</span>
+            {{else}}<span class="badge badge-sm badge-warning badge-soft gap-1">{{icon "globe"}} public</span>{{end}}
+            {{if .CredentialName}}<span class="flex items-center gap-1 opacity-70">{{icon "lock-keyhole" "opacity-60"}}{{.CredentialName}} → <span class="mono">{{.AuthHeader}}</span></span>
+            {{else if .CredentialID}}<span class="text-warning">credential missing</span>{{end}}
+            {{if .CostPerRequest}}<span class="opacity-60">{{money .CostPerRequest}} / request</span>{{end}}
+          </div>
+        </td>
+        <td class="text-xs">
+          {{if .Stats.Requests}}
+          <div class="flex flex-col gap-0.5">
+            <span><span class="font-semibold">{{compact .Stats.Requests}}</span> calls</span>
+            <span class="{{if .Stats.Errors}}text-error{{else}}opacity-60{{end}}">{{.Stats.Errors}} errors</span>
+          </div>
+          {{else}}<span class="opacity-50">no calls</span>{{end}}
+        </td>
+        <td class="text-center">
+          <input type="checkbox" class="toggle toggle-sm toggle-success" aria-label="Enabled" {{if .Enabled}}checked{{end}} {{if not $.Data.CanEdit}}disabled{{end}}
+            hx-post="/ui/passthrough/{{.ID}}/toggle" hx-trigger="change" hx-swap="none">
+        </td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              <li><button hx-get="/ui/passthrough/{{.ID}}/usage" hx-target="#modal-body">{{icon "terminal"}} Usage & curl</button></li>
+              {{if $.Data.CanEdit}}
+              <li><button hx-get="/ui/passthrough/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+              <li><button class="text-error" hx-post="/ui/passthrough/{{.ID}}/delete" hx-confirm="Delete route {{.Name}}? Clients calling /pt/{{.Name}}/ will get 404.">{{icon "trash-2"}} Delete</button></li>
+              {{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "route-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/passthrough"{{else}}hx-post="/ui/passthrough/{{.R.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-2xl"
+  x-data="{name: {{json .R.Name}}, cred: {{json (deref .R.CredentialID)}}}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New pass-through route") "Edit route") "Sub" "Requests to the public URL are forwarded to the target with any method, path and query string." "Icon" "route"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" x-model="name" class="input w-full font-mono" placeholder="e.g. vllm-admin" maxlength="63" required>
+        <p class="mt-1 text-xs text-base-content/60">Public URL: <span class="mono truncate">{{.BaseURL}}/pt/<span x-text="name || '…'"></span>/</span></p>
+      </fieldset>
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Description</legend>
+        <input name="description" value="{{.R.Description}}" class="input w-full" placeholder="What lives behind this route">
+      </fieldset>
+      <fieldset class="fieldset min-w-0 sm:col-span-2">
+        <legend class="fieldset-legend">Target URL</legend>
+        <label class="input w-full">{{icon "link" "opacity-50"}}<input name="target_url" value="{{.R.TargetURL}}" class="font-mono" placeholder="http://10.0.0.5:8000" required></label>
+        <p class="mt-1 text-xs text-base-content/60"><span class="mono">/pt/name/a/b?x=1</span> is forwarded to <span class="mono">&lt;target&gt;/a/b?x=1</span>. Redirects are relayed, not followed.</p>
+      </fieldset>
+    </div>
+
+    <div class="rounded-box border border-base-300 bg-base-200/40 p-4">
+      <div class="mb-3 text-sm font-medium">Upstream authentication</div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <fieldset class="fieldset min-w-0">
+          <legend class="fieldset-legend">Credential</legend>
+          <select name="credential_id" class="select w-full" x-model="cred">
+            <option value="">None</option>
+            {{$cid := deref .R.CredentialID}}
+            {{range .Credentials}}<option value="{{.ID}}" {{if eq .ID $cid}}selected{{end}}>{{.Name}}{{if .Hint}} ({{.Hint}}){{end}}</option>{{end}}
+          </select>
+          <p class="mt-1 text-xs text-base-content/60"><a class="link" href="/ui/credentials" target="_blank">Manage credentials</a></p>
+        </fieldset>
+        <fieldset class="fieldset min-w-0" :class="cred ? '' : 'opacity-50'">
+          <legend class="fieldset-legend">Header</legend>
+          <input name="auth_header" value="{{.R.AuthHeader}}" class="input w-full font-mono" placeholder="Authorization">
+        </fieldset>
+        <fieldset class="fieldset min-w-0" :class="cred ? '' : 'opacity-50'">
+          <legend class="fieldset-legend">Value prefix</legend>
+          <input name="auth_prefix" value="{{.R.AuthPrefix}}" class="input w-full font-mono" placeholder="Bearer ">
+        </fieldset>
+      </div>
+      <p class="mt-1 text-xs opacity-60">The client's own <span class="mono">Authorization</span> and cookies are never forwarded; the decrypted credential is sent as <span class="mono">&lt;header&gt;: &lt;prefix&gt;&lt;secret&gt;</span>.</p>
+      <fieldset class="fieldset mt-2">
+        <legend class="fieldset-legend">Extra headers</legend>
+        <textarea name="extra_headers" rows="3" class="textarea w-full font-mono text-xs" placeholder="X-Tenant: research&#10;Accept: application/json">{{.Headers}}</textarea>
+        <p class="mt-1 text-xs text-base-content/60">One <span class="mono">Name: value</span> per line; overrides client headers of the same name.</p>
+      </fieldset>
+    </div>
+
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <label class="flex cursor-pointer items-start gap-3">
+        <input type="checkbox" name="require_key" class="toggle toggle-primary mt-0.5" {{if .R.RequireKey}}checked{{end}}>
+        <span><span class="font-medium">Require a LemonGate key</span><span class="block text-xs opacity-60">Callers send <span class="mono">Authorization: Bearer &lt;key&gt;</span>. Calls are attributed to the key, user and team. Off = anyone who can reach LemonGate can call it.</span></span>
+      </label>
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Cost per request (USD)</legend>
+        <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.000001" min="0" name="cost_per_request" value="{{if .R.CostPerRequest}}{{.R.CostPerRequest}}{{end}}" placeholder="0"></label>
+        <p class="mt-1 text-xs text-base-content/60">Charged to the key's spend for each successful (non-4xx/5xx) call.</p>
+      </fieldset>
+    </div>
+    <label class="flex cursor-pointer items-center gap-3">
+      <input type="checkbox" name="enabled" class="toggle toggle-success" {{if .R.Enabled}}checked{{end}}>
+      <span class="font-medium">Enabled</span>
+    </label>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create route") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "route-usage"}}
+{{with .Data}}
+<div data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" (or (and .Created "Route created") .R.Name) "Sub" "Call the route with any HTTP method; path and query are appended to the target." "Icon" "terminal"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Public URL</div>
+      {{template "copy-field" .URL}}
+      <p class="mt-2 text-xs opacity-60">Forwards to <span class="mono">{{.R.TargetURL}}</span>{{if not .R.Enabled}} · <span class="text-warning">currently disabled</span>{{end}}</p>
+    </div>
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Example</div>
+      <div class="mockup-code bg-neutral text-neutral-content text-xs">
+<pre data-prefix="$"><code>curl {{.URL}}health{{if .R.RequireKey}} \{{end}}</code></pre>
+{{if .R.RequireKey}}<pre data-prefix=" "><code>  -H "Authorization: Bearer $LEMONGATE_KEY"</code></pre>{{end}}
+<pre data-prefix="$"><code>curl -X POST {{.URL}}tokenize \</code></pre>
+{{if .R.RequireKey}}<pre data-prefix=" "><code>  -H "Authorization: Bearer $LEMONGATE_KEY" \</code></pre>{{end}}
+<pre data-prefix=" "><code>  -H "Content-Type: application/json" -d '{"prompt": "hello"}'</code></pre>
+      </div>
+    </div>
+    <ul class="flex list-disc flex-col gap-1 pl-5 text-sm opacity-75">
+      <li>Errors from LemonGate itself (unknown route, bad key, unreachable target) use the OpenAI error shape <span class="mono">{"error": {"message", "type", "code"}}</span>; upstream responses are relayed unchanged, including streams.</li>
+      <li>Each call is logged as route <span class="mono">passthrough/{{.R.Name}}</span> with status, latency and{{if .R.CostPerRequest}} a cost of {{money .R.CostPerRequest}}{{else}} no cost{{end}}.</li>
+    </ul>
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Done</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "calls-table"}}
+{{with .Data}}
+{{if not .Calls}}
+  <div class="glass-card">{{template "empty" dict "Icon" "activity" "Title" "No calls yet" "Body" "Requests through pass-through routes appear here."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Route</th><th>Request</th><th>Status</th><th class="text-right">Latency</th><th>Key</th><th class="text-right">Cost</th></tr></thead>
+    <tbody>
+    {{range .Calls}}
+      <tr>
+        <td class="whitespace-nowrap text-xs"><span title="{{dt .At}}">{{ago .At}}</span></td>
+        <td class="font-medium">{{.Route}}</td>
+        <td class="max-w-xs"><span class="mono break-all text-xs"><span class="font-semibold">{{.Method}}</span> {{.Path}}</span>{{if .Error}}<div class="text-xs text-error">{{truncate .Error 80}}</div>{{end}}</td>
+        <td><span class="badge badge-sm {{statusClass .Status}}">{{.HTTP}}</span></td>
+        <td class="text-right text-xs tabular-nums">{{num .LatencyMs}} ms</td>
+        <td class="text-sm">{{if .KeyID}}<a class="link link-hover" href="/ui/keys/{{.KeyID}}">{{or .KeyAlias "key"}}</a>{{else}}<span class="opacity-50">—</span>{{end}}</td>
+        <td class="text-right text-xs tabular-nums">{{if .Cost}}{{money .Cost}}{{else}}<span class="opacity-40">—</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+{{end}}
+{{end}}
+{{end}}

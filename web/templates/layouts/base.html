@@ -1,0 +1,51 @@
+{{define "head"}}
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{if .Title}}{{.Title}} · {{end}}{{.Brand.AppName}}</title>
+<link rel="icon" type="image/svg+xml" href="{{if .Brand.LogoURL}}{{.Brand.LogoURL}}{{else}}/static/img/favicon.svg{{end}}">
+<link rel="stylesheet" href="/static/dist/app.css?v={{.Version}}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("lg-theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "lemon-night" : "lemon";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+</script>
+<script src="/static/dist/htmx.min.js?v={{.Version}}" defer></script>
+<script src="/static/dist/chart.min.js?v={{.Version}}" defer></script>
+<script src="/static/js/app.js?v={{.Version}}" defer></script>
+<script src="/static/dist/alpine.min.js?v={{.Version}}" defer></script>
+{{end}}
+
+{{define "logo"}}
+<img src="{{if .Brand.LogoURL}}{{.Brand.LogoURL}}{{else}}/static/img/logo.svg{{end}}" alt="" class="size-9 drop-shadow-sm">
+{{end}}
+
+{{/* Minimal centered layout for login and invite pages. */}}
+{{define "auth"}}<!doctype html>
+<html lang="en">
+<head>{{template "head" .}}</head>
+<body class="min-h-screen">
+  <div class="hero-glow relative flex min-h-screen items-center justify-center overflow-hidden p-4">
+    <div class="pointer-events-none absolute -left-24 -top-24 size-96 rounded-full bg-primary/30 blur-3xl"></div>
+    <div class="pointer-events-none absolute -bottom-32 -right-24 size-[28rem] rounded-full bg-secondary/25 blur-3xl"></div>
+    <div class="relative w-full max-w-md">
+      <div class="mb-8 flex flex-col items-center gap-3 text-center">
+        <img src="{{if .Brand.LogoURL}}{{.Brand.LogoURL}}{{else}}/static/img/logo.svg{{end}}" alt="" class="size-16 drop-shadow-lg">
+        <div>
+          <h1 class="brand-text text-3xl font-extrabold tracking-tight">{{.Brand.AppName}}</h1>
+          <p class="mt-1 text-sm opacity-60">{{.Brand.Tagline}}</p>
+        </div>
+      </div>
+      <div class="glass-card p-8 shadow-xl">
+        {{template "content" .}}
+      </div>
+      <p class="mt-6 text-center text-xs opacity-40">{{.Brand.AppName}} {{.Version}}</p>
+    </div>
+  </div>
+  {{template "toasts" .}}
+</body>
+</html>
+{{end}}

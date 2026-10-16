@@ -1,0 +1,295 @@
+{{define "event-icon"}}
+{{- if eq . "budget_threshold"}}{{icon "wallet"}}
+{{- else if eq . "key_expiring"}}{{icon "alarm-clock"}}
+{{- else if eq . "deployment_down"}}{{icon "server-crash"}}
+{{- else if eq . "deployment_up"}}{{icon "circle-check"}}
+{{- else if eq . "error_rate"}}{{icon "activity"}}
+{{- else if eq . "slow_response"}}{{icon "timer"}}
+{{- else if eq . "daily_report"}}{{icon "chart-column"}}
+{{- else if eq . "test"}}{{icon "flask-conical"}}
+{{- else}}{{icon "bell"}}{{end -}}
+{{end}}
+
+{{define "severity-badge"}}
+<span class="badge badge-sm badge-soft gap-1 {{if eq . "critical"}}badge-error{{else if eq . "warning"}}badge-warning{{else}}badge-info{{end}}">
+  {{- if eq . "critical"}}{{icon "octagon-alert"}}{{else if eq . "warning"}}{{icon "triangle-alert"}}{{else}}{{icon "info"}}{{end}}{{.}}</span>
+{{end}}
+
+{{define "channel-kind-icon"}}
+{{- if eq . "slack"}}{{icon "hash"}}{{else if eq . "mattermost"}}{{icon "messages-square"}}{{else if eq . "webhook"}}{{icon "webhook"}}{{else}}{{icon "mail"}}{{end -}}
+{{end}}
+
+{{define "alert-channels"}}
+{{with .Data}}
+{{if not .Channels}}
+  <div class="glass-card">
+    {{template "empty" dict "Icon" "bell-off" "Title" "No alert channels yet" "Body" "Add a Slack, Mattermost, webhook or email channel. Until then, alerts are still recorded in the history below."}}
+  </div>
+{{else}}
+<div class="flex flex-col gap-3">
+  {{range .Channels}}
+  <div class="glass-card card-hover p-4 {{if not .Enabled}}opacity-70{{end}}">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-start">
+      <div class="flex min-w-0 flex-1 gap-3">
+        <div class="flex size-10 shrink-0 items-center justify-center rounded-xl {{if not .Enabled}}bg-base-200{{else if .ConfigErr}}bg-error/15 text-error{{else}}bg-primary/25{{end}}">{{template "channel-kind-icon" (printf "%s" .Kind)}}</div>
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="font-semibold">{{.Name}}</span>
+            <span class="badge badge-ghost badge-sm capitalize">{{.Kind}}</span>
+            {{if not .Enabled}}<span class="badge badge-sm">paused</span>{{end}}
+            {{if .ConfigErr}}<span class="badge badge-error badge-sm">unreadable config</span>{{end}}
+            {{if and (eq (printf "%s" .Kind) "email") (not $.Data.SMTP)}}<span class="badge badge-warning badge-soft badge-sm" title="Set LEMONGATE_SMTP_HOST and LEMONGATE_SMTP_FROM">SMTP not configured</span>{{end}}
+          </div>
+          <div class="mono mt-0.5 truncate text-xs opacity-60">{{or .Target "—"}}</div>
+          <div class="mt-2 flex flex-wrap items-center gap-1">
+            <span class="text-xs opacity-60">Severity ≥</span>{{template "severity-badge" .MinSeverity}}
+            <span class="mx-1 text-xs opacity-30">·</span>
+            {{range .EventNames}}<span class="badge badge-outline badge-sm">{{.}}</span>{{else}}<span class="badge badge-outline badge-sm">All events</span>{{end}}
+          </div>
+          <div class="mt-2 text-xs opacity-60">
+            {{if .LastSentAt}}Last attempt {{ago .LastSentAt}} · {{end}}{{.Sent7d}} delivered{{if .Failed7d}} · <span class="text-error">{{.Failed7d}} failed</span>{{end}} in 7 days
+            {{if .LastError}}<div class="mt-1 truncate text-error" title="{{.LastError}}">{{icon "circle-alert"}} {{truncate .LastError 120}}</div>{{end}}
+          </div>
+        </div>
+      </div>
+      {{if $.Data.CanEdit}}
+      <div class="flex shrink-0 items-center gap-1 self-end sm:self-start">
+        <button class="btn btn-sm gap-2" hx-post="/ui/alerts/channels/{{.ID}}/test" hx-disabled-elt="this" {{if or (not .Enabled) .ConfigErr}}disabled{{end}}>{{icon "send"}} Send test</button>
+        <div class="dropdown dropdown-end">
+          <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="More actions">{{icon "ellipsis-vertical"}}</div>
+          <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+            <li><button hx-get="/ui/alerts/channels/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+            {{if .Enabled}}<li><button hx-post="/ui/alerts/channels/{{.ID}}/disable">{{icon "pause"}} Pause</button></li>
+            {{else}}<li><button hx-post="/ui/alerts/channels/{{.ID}}/enable">{{icon "play"}} Resume</button></li>{{end}}
+            <li><a href="#alert-history" onclick="var s=document.querySelector('#alert-filters select[name=channel]'); if(s){s.value='{{.Name}}'; s.dispatchEvent(new Event('change',{bubbles:true}))}">{{icon "history"}} View history</a></li>
+            <li><button class="text-error" hx-post="/ui/alerts/channels/{{.ID}}/delete" hx-confirm="Delete channel {{.Name}}? Its delivery history is kept.">{{icon "trash-2"}} Delete</button></li>
+          </ul>
+        </div>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "alert-history"}}
+{{with .Data}}
+{{if not .Entries}}
+  <div class="glass-card">
+    {{if .Filtered}}{{template "empty" dict "Icon" "search-x" "Title" "No matching alerts" "Body" "Try clearing a filter."}}
+    {{else}}{{template "empty" dict "Icon" "inbox" "Title" "No alerts yet" "Body" "Alerts appear here when budgets, deployments, error rates or key expiries need attention."}}{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Severity</th><th>Alert</th><th>Channel</th><th>Delivery</th></tr></thead>
+    <tbody>
+    {{range .Entries}}
+      <tr class="cursor-pointer hover:bg-base-200/60" hx-get="/ui/alerts/history/{{.ID}}" hx-target="#modal-body" hx-disinherit="*">
+        <td class="whitespace-nowrap text-xs"><span title="{{dt .At}}">{{ago .At}}</span></td>
+        <td>{{template "severity-badge" .Severity}}</td>
+        <td class="max-w-md">
+          <div class="flex items-start gap-2">
+            <span class="mt-0.5 opacity-60">{{template "event-icon" .Event}}</span>
+            <div class="min-w-0">
+              <div class="truncate font-medium">{{.Title}}</div>
+              {{if ne .Body .Title}}<div class="truncate text-xs opacity-60">{{truncate .Body 140}}</div>{{end}}
+            </div>
+          </div>
+        </td>
+        <td class="text-sm">{{if .Channel}}{{.Channel}}{{else}}<span class="opacity-50">—</span>{{end}}</td>
+        <td>
+          {{if not .Channel}}<span class="badge badge-ghost badge-sm" title="No enabled channel subscribes to this event">no channel</span>
+          {{else if .OK}}<span class="badge badge-success badge-soft badge-sm gap-1">{{icon "check"}} delivered</span>
+          {{else}}<span class="badge badge-error badge-soft badge-sm gap-1" title="{{.Error}}">{{icon "x"}} failed</span>{{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<div class="mt-3 flex items-center justify-between text-xs">
+  <span class="opacity-50">Page {{.Page}}</span>
+  <div class="join">
+    <button class="btn join-item btn-xs" {{if le .Page 1}}disabled{{end}} hx-get="/ui/alerts/history?page={{sub .Page 1}}" hx-include="#alert-filters" hx-target="#alert-history">{{icon "chevron-left"}} Newer</button>
+    <button class="btn join-item btn-xs" {{if not .HasMore}}disabled{{end}} hx-get="/ui/alerts/history?page={{add .Page 1}}" hx-include="#alert-filters" hx-target="#alert-history">Older {{icon "chevron-right"}}</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "alert-detail"}}
+{{with .Data}}
+<div data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" .Title "Sub" (printf "%s · %s" (title .Event) (dt .At)) "Icon" "bell-ring"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    <div class="flex flex-wrap items-center gap-2">
+      {{template "severity-badge" .Severity}}
+      <span class="badge badge-outline badge-sm">{{.Event}}</span>
+      {{if not .Channel}}<span class="badge badge-ghost badge-sm">not delivered — no matching channel</span>
+      {{else if .OK}}<span class="badge badge-success badge-soft badge-sm">delivered to {{.Channel}}</span>
+      {{else}}<span class="badge badge-error badge-soft badge-sm">delivery to {{.Channel}} failed</span>{{end}}
+    </div>
+    {{if .Error}}<div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-alert"}}<span class="break-all">{{.Error}}</span></div>{{end}}
+    <pre class="whitespace-pre-wrap rounded-field bg-base-200 p-4 text-sm leading-relaxed">{{.Body}}</pre>
+    {{if .DedupeKey}}<p class="text-xs opacity-60">Dedupe key <code class="mono">{{.DedupeKey}}</code></p>{{end}}
+  </div>
+  <div class="flex justify-end border-t border-base-300 px-6 py-4">
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Close</button>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "channel-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/alerts/channels"{{else}}hx-post="/ui/alerts/channels/{{.Channel.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-2xl"
+      x-data="{kind: {{json (.Channel.Kind)}}, showSecret: false}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add alert channel") (printf "Edit %s" .Channel.Name)) "Sub" "Choose where alerts go and which ones this destination receives." "Icon" "bell-ring"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.Channel.Name}}" class="input w-full" placeholder="e.g. ops-oncall" required maxlength="80">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Type</legend>
+        <select name="kind" class="select w-full" x-model="kind">
+          <option value="slack" {{if eq (printf "%s" .Channel.Kind) "slack"}}selected{{end}}>Slack</option>
+          <option value="mattermost" {{if eq (printf "%s" .Channel.Kind) "mattermost"}}selected{{end}}>Mattermost</option>
+          <option value="webhook" {{if eq (printf "%s" .Channel.Kind) "webhook"}}selected{{end}}>Webhook</option>
+          <option value="email" {{if eq (printf "%s" .Channel.Kind) "email"}}selected{{end}}>Email</option>
+        </select>
+      </fieldset>
+    </div>
+
+    {{/* Slack */}}
+    <div class="flex flex-col gap-4" x-show="kind==='slack'" {{if ne (printf "%s" .Channel.Kind) "slack"}}x-cloak{{end}}>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Incoming webhook URL</legend>
+        <label class="input w-full">{{icon "lock-keyhole" "opacity-50"}}
+          <input :type="showSecret ? 'text' : 'password'" name="slack_url" class="font-mono text-xs" autocomplete="off"
+            placeholder="{{if and (not .IsNew) (eq (printf "%s" .Channel.Kind) "slack") .URLHint}}Leave empty to keep {{.URLHint}}{{else}}https://hooks.slack.com/services/…{{end}}">
+          <button type="button" class="btn btn-ghost btn-xs btn-square" @click="showSecret=!showSecret" aria-label="Show URL"><span x-show="!showSecret">{{icon "eye"}}</span><span x-show="showSecret" x-cloak>{{icon "eye-off"}}</span></button>
+        </label>
+        <p class="label text-xs">Create one under your workspace's app settings → Incoming Webhooks. The URL is a secret and is stored encrypted.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Mention on critical alerts (optional)</legend>
+        <input name="mention" value="{{.Channel.Config.Mention}}" class="input w-full font-mono text-sm" placeholder="<!channel> or <@U012AB3CD>">
+      </fieldset>
+    </div>
+
+    {{/* Mattermost */}}
+    <div class="flex flex-col gap-4" x-show="kind==='mattermost'" {{if ne (printf "%s" .Channel.Kind) "mattermost"}}x-cloak{{end}}>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Incoming webhook URL</legend>
+        <label class="input w-full">{{icon "lock-keyhole" "opacity-50"}}
+          <input :type="showSecret ? 'text' : 'password'" name="mattermost_url" class="font-mono text-xs" autocomplete="off"
+            placeholder="{{if and (not .IsNew) (eq (printf "%s" .Channel.Kind) "mattermost") .URLHint}}Leave empty to keep {{.URLHint}}{{else}}https://chat.example.com/hooks/…{{end}}">
+          <button type="button" class="btn btn-ghost btn-xs btn-square" @click="showSecret=!showSecret" aria-label="Show URL"><span x-show="!showSecret">{{icon "eye"}}</span><span x-show="showSecret" x-cloak>{{icon "eye-off"}}</span></button>
+        </label>
+        <p class="label text-xs">In Mattermost: Integrations → Incoming Webhooks → Add. The URL is a secret and is stored encrypted.</p>
+      </fieldset>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Channel override (optional)</legend>
+          <input name="mm_channel" value="{{if eq (printf "%s" .Channel.Kind) "mattermost"}}{{.Channel.Config.Channel}}{{end}}" class="input w-full font-mono text-sm" placeholder="ops-alerts">
+          <p class="label text-xs">Channel name from its URL. Leave empty to post to the webhook's default channel.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Mention on critical alerts (optional)</legend>
+          <input name="mm_mention" value="{{if eq (printf "%s" .Channel.Kind) "mattermost"}}{{.Channel.Config.Mention}}{{end}}" class="input w-full font-mono text-sm" placeholder="@channel, @here or @oncall-team">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Display name (optional)</legend>
+          <input name="mm_username" value="{{if eq (printf "%s" .Channel.Kind) "mattermost"}}{{.Channel.Config.Username}}{{end}}" class="input w-full" placeholder="LemonGate">
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Icon URL (optional)</legend>
+          <input name="mm_icon_url" value="{{if eq (printf "%s" .Channel.Kind) "mattermost"}}{{.Channel.Config.IconURL}}{{end}}" class="input w-full font-mono text-xs" placeholder="https://…/logo.png">
+        </fieldset>
+      </div>
+      <p class="text-xs opacity-60">Channel, display name and icon overrides only apply if the server allows integrations to override them (System Console → Integrations).</p>
+    </div>
+
+    {{/* Webhook */}}
+    <div class="flex flex-col gap-4" x-show="kind==='webhook'" {{if ne (printf "%s" .Channel.Kind) "webhook"}}x-cloak{{end}}>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Endpoint URL</legend>
+        <label class="input w-full">{{icon "webhook" "opacity-50"}}
+          <input :type="showSecret ? 'text' : 'password'" name="webhook_url" class="font-mono text-xs" autocomplete="off"
+            placeholder="{{if and (not .IsNew) (eq (printf "%s" .Channel.Kind) "webhook") .URLHint}}Leave empty to keep {{.URLHint}}{{else}}https://ops.example.com/hooks/lemongate{{end}}">
+          <button type="button" class="btn btn-ghost btn-xs btn-square" @click="showSecret=!showSecret" aria-label="Show URL"><span x-show="!showSecret">{{icon "eye"}}</span><span x-show="showSecret" x-cloak>{{icon "eye-off"}}</span></button>
+        </label>
+        <p class="label text-xs">Receives <code class="mono">POST</code> JSON: <code class="mono">{event, severity, title, body, fields, timestamp}</code>.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Signing secret (optional)</legend>
+        <label class="input w-full">{{icon "fingerprint" "opacity-50"}}
+          <input type="password" name="secret" autocomplete="new-password" class="font-mono text-xs" placeholder="{{if .HasSecret}}Leave empty to keep the current secret{{else}}Any random string{{end}}">
+        </label>
+        {{if .HasSecret}}<label class="label mt-1 cursor-pointer gap-2 text-xs"><input type="checkbox" name="clear_secret" class="checkbox checkbox-xs"> Remove signing secret</label>{{end}}
+        <p class="mt-1 text-xs leading-relaxed opacity-70">Adds <code class="mono">X-LemonGate-Signature: sha256=HMAC(secret, timestamp + "." + body)</code> and <code class="mono">X-LemonGate-Timestamp</code>.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Extra headers (optional)</legend>
+        <textarea name="headers" rows="3" class="textarea w-full font-mono text-xs" placeholder="Authorization: Bearer abc123&#10;X-Env: prod">{{.HeadersText}}</textarea>
+        <p class="mt-1 text-xs leading-relaxed opacity-70">One <code class="mono">Name: value</code> per line.{{if .HeadersText}} Values shown as ••• are kept unchanged.{{end}}</p>
+      </fieldset>
+    </div>
+
+    {{/* Email */}}
+    <div class="flex flex-col gap-4" x-show="kind==='email'" {{if ne (printf "%s" .Channel.Kind) "email"}}x-cloak{{end}}>
+      {{if not .SMTP}}
+      <div role="alert" class="alert alert-warning alert-soft text-sm">{{icon "triangle-alert"}}<span>SMTP is not configured. Set <code class="mono">LEMONGATE_SMTP_HOST</code> and <code class="mono">LEMONGATE_SMTP_FROM</code> (plus credentials) and restart, or deliveries will fail.</span></div>
+      {{end}}
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Recipients</legend>
+        <textarea name="recipients" rows="2" class="textarea w-full font-mono text-xs" placeholder="oncall@example.com, finance@example.com">{{joinc .Channel.Config.Recipients}}</textarea>
+        <p class="label text-xs">Comma or newline separated. Each alert is sent as one HTML + plain-text email.</p>
+      </fieldset>
+    </div>
+
+    <div class="divider my-0"></div>
+
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Events</legend>
+      {{$sel := .Channel.Events}}
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        {{range .Kinds}}
+        <label class="flex cursor-pointer items-start gap-3 rounded-field border border-base-300 p-3 hover:bg-base-200/60">
+          <input type="checkbox" name="events" value="{{.Key}}" class="checkbox checkbox-sm checkbox-primary mt-0.5" {{if or (not $sel) (has $sel .Key)}}checked{{end}}>
+          <span><span class="flex items-center gap-1.5 text-sm font-medium">{{template "event-icon" .Key}} {{.Label}}</span><span class="block text-xs opacity-60">{{.Description}}</span></span>
+        </label>
+        {{end}}
+      </div>
+      <p class="label text-xs">Selecting every event also subscribes this channel to event types added in future versions.</p>
+    </fieldset>
+
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Minimum severity</legend>
+        <select name="min_severity" class="select w-full">
+          {{$ms := .Channel.MinSeverity}}
+          {{range .Severities}}<option value="{{.}}" {{if eq . $ms}}selected{{end}}>{{title .}}{{if eq . "info"}} — everything{{else if eq . "warning"}} — warnings and critical{{else}} — critical only{{end}}</option>{{end}}
+        </select>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Status</legend>
+        <label class="label mt-2 cursor-pointer gap-3">
+          <input type="checkbox" name="enabled" class="toggle toggle-primary" {{if .Channel.Enabled}}checked{{end}}>
+          <span class="text-sm">Enabled</span>
+        </label>
+      </fieldset>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create channel") "Save changes")}}
+</form>
+{{end}}
+{{end}}

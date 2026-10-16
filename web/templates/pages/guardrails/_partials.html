@@ -1,0 +1,173 @@
+{{define "action-badge"}}<span class="badge badge-sm {{if eq . "block"}}badge-error{{else if eq . "mask"}}badge-info{{else if eq . "error"}}badge-warning{{else}}badge-ghost{{end}} gap-1">{{if eq . "block"}}{{icon "ban"}}{{else if eq . "mask"}}{{icon "eye-off"}}{{else if eq . "error"}}{{icon "triangle-alert"}}{{else}}{{icon "scroll-text"}}{{end}}{{.}}</span>{{end}}
+
+{{define "mode-badge"}}<span class="badge badge-sm badge-outline" title="{{if eq . "pre"}}Checks request text{{else if eq . "post"}}Checks response text{{else}}Checks requests and responses{{end}}">{{if eq . "both"}}pre + post{{else}}{{.}}{{end}}</span>{{end}}
+
+{{define "preset-badge"}}<span class="badge badge-secondary badge-soft badge-xs gap-1" title="Created by the {{.}} preset">{{icon "library"}}from preset</span>{{end}}
+
+{{define "guardrails-table"}}
+{{with .Data}}
+{{if not .Rows}}
+  <div class="glass-card">{{template "empty" dict "Icon" "shield-check" "Title" "No guardrails yet" "Body" "Install a preset for a ready-made bundle, or create a guardrail of any kind yourself."}}
+  {{if .CanEdit}}<div class="-mt-6 flex flex-wrap justify-center gap-2 pb-10">
+    <a class="btn btn-primary btn-sm gap-2" href="/ui/guardrails?tab=presets">{{icon "library"}} Browse presets</a>
+    <button class="btn btn-ghost btn-sm gap-2 border-base-300" hx-get="/ui/guardrails/new?kind=pii" hx-target="#modal-body">{{icon "fingerprint"}} Create a PII guardrail</button>
+  </div>{{end}}
+  </div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr>
+      <th>Guardrail</th><th>Mode</th><th>Action</th><th>Config</th><th>Activity</th><th class="text-center">Default-on</th><th class="text-center">Enabled</th><th></th>
+    </tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr class="{{if not .Enabled}}opacity-60{{end}}">
+        <td>
+          <div class="flex items-center gap-3">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-xl {{if .Invalid}}bg-error/15 text-error{{else}}bg-primary/25{{end}}">{{icon .Kind.Icon}}</div>
+            <div class="min-w-0">
+              <div class="flex flex-wrap items-center gap-1.5"><span class="font-semibold">{{.Name}}</span>{{if .Preset}}{{template "preset-badge" .Preset}}{{end}}</div>
+              <div class="text-xs opacity-60">{{.Kind.Label}}{{if .Description}} · {{truncate .Description 60}}{{end}}</div>
+              {{if .Invalid}}<div class="text-xs text-error">Not loaded: {{.Invalid}}</div>{{end}}
+            </div>
+          </div>
+        </td>
+        <td>{{template "mode-badge" .Mode}}</td>
+        <td>{{template "action-badge" .Action}}</td>
+        <td class="max-w-xs"><span class="mono line-clamp-2 break-all text-xs opacity-75" title="{{.Summary}}">{{.Summary}}</span></td>
+        <td class="text-xs">
+          <div class="flex flex-col gap-0.5">
+            <span>{{if .Events}}<span class="font-semibold">{{.Events}}</span> event{{if ne .Events 1}}s{{end}} · 24h{{else}}<span class="opacity-50">no events · 24h</span>{{end}}</span>
+            <span class="opacity-60">{{if or .DefaultOn .InOnPol}}all requests{{else if .Refs}}{{.Refs}} key/team{{if ne .Refs 1}}s{{end}}{{else if .Policies}}via policy{{else}}on request only{{end}}</span>
+            {{if .Policies}}<span class="flex flex-wrap gap-1">{{range .Policies}}<span class="badge badge-ghost badge-xs gap-1">{{icon "layers" "opacity-60"}}{{.}}</span>{{end}}</span>{{end}}
+          </div>
+        </td>
+        <td class="text-center">
+          <input type="checkbox" class="toggle toggle-sm toggle-primary" aria-label="Default-on" {{if .DefaultOn}}checked{{end}} {{if not $.Data.CanEdit}}disabled{{end}}
+            hx-post="/ui/guardrails/{{.ID}}/toggle?field=default_on" hx-trigger="change" hx-swap="none">
+        </td>
+        <td class="text-center">
+          <input type="checkbox" class="toggle toggle-sm toggle-success" aria-label="Enabled" {{if .Enabled}}checked{{end}} {{if not $.Data.CanEdit}}disabled{{end}}
+            hx-post="/ui/guardrails/{{.ID}}/toggle?field=enabled" hx-trigger="change" hx-swap="none">
+        </td>
+        <td class="text-right">
+          <div class="dropdown dropdown-end">
+            <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+            <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+              {{if $.Data.CanEdit}}<li><button hx-get="/ui/guardrails/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>{{end}}
+              <li><a href="/ui/guardrails?tab=bench&amp;guardrail={{.Name}}">{{icon "flask-conical"}} Test bench</a></li>
+              <li><a href="/ui/guardrails?tab=events">{{icon "scroll-text"}} Events</a></li>
+              {{if $.Data.CanEdit}}<li><button class="text-error" hx-post="/ui/guardrails/{{.ID}}/delete" hx-confirm="Delete guardrail {{.Name}}?{{if .Refs}} {{.Refs}} key(s)/team(s) reference it and will stop being checked by it.{{end}}{{if .Policies}} It is also removed from the policies that include it.{{end}}">{{icon "trash-2"}} Delete</button></li>{{end}}
+            </ul>
+          </div>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Rows}} guardrail{{if ne (len .Rows) 1}}s{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "outcome-badge"}}<span class="badge badge-sm {{if eq . "blocked"}}badge-error{{else if eq . "masked"}}badge-info{{else if eq . "logged"}}badge-ghost{{else if eq . "error"}}badge-warning{{else}}badge-success badge-soft{{end}}">{{.}}</span>{{end}}
+
+{{define "bench-result"}}
+{{with .Data}}
+{{if .Error}}
+  <div class="glass-card p-5"><div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-alert"}}<span>{{.Error}}</span></div></div>
+{{else}}
+<div class="glass-card flex flex-col gap-5 p-5" data-bench-outcome="{{if .Blocked}}blocked{{else if .Changed}}masked{{else}}passed{{end}}">
+  <div class="flex items-center gap-4">
+    {{if .Blocked}}
+      <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-error/15 text-error">{{icon "shield-x" "text-2xl"}}</div>
+      <div class="min-w-0"><div class="text-lg font-semibold text-error">Blocked</div><div class="break-words text-sm opacity-70">by <span class="font-medium">{{.By}}</span> — {{.Reason}}</div></div>
+    {{else if .Changed}}
+      <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-info/15 text-info">{{icon "eye-off" "text-2xl"}}</div>
+      <div><div class="text-lg font-semibold">Allowed with masking</div><div class="text-sm opacity-70">The model would receive the masked text below.</div></div>
+    {{else}}
+      <div class="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-success/15 text-success">{{icon "circle-check" "text-2xl"}}</div>
+      <div><div class="text-lg font-semibold text-success">Passed</div><div class="text-sm opacity-70">Nothing to block or mask{{range .Steps}}{{if eq .Outcome "logged"}} (some matches were logged){{break}}{{end}}{{end}}.</div></div>
+    {{end}}
+    <span class="ml-auto shrink-0 text-xs opacity-50">{{.Ran}} of {{.Total}} ran · {{if eq .Phase "post"}}response{{else}}request{{end}}</span>
+  </div>
+
+  {{if not .Blocked}}
+  <div>
+    <div class="mb-2 flex items-center justify-between">
+      <span class="text-xs font-semibold uppercase tracking-wider opacity-60">{{if .Changed}}Masked output{{else}}Output (unchanged){{end}}</span>
+      <button type="button" class="btn btn-ghost btn-xs gap-1" onclick="lgCopy({{.Output}})">{{icon "copy"}} Copy</button>
+    </div>
+    <pre class="mono max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-field bg-base-200 p-3 text-xs">{{range .Parts}}{{if .Mask}}<mark class="rounded bg-info/25 px-1 font-semibold text-info">{{.Text}}</mark>{{else}}{{.Text}}{{end}}{{end}}</pre>
+  </div>
+  {{if .Changed}}
+  <details class="collapse-arrow collapse rounded-field border border-base-300">
+    <summary class="collapse-title min-h-0 py-2 text-xs font-semibold uppercase tracking-wider opacity-60">Original input</summary>
+    <div class="collapse-content"><pre class="mono max-h-60 overflow-auto whitespace-pre-wrap break-words text-xs opacity-70">{{.Input}}</pre></div>
+  </details>
+  {{end}}
+  {{end}}
+
+  <div>
+    <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Steps</div>
+    <ul class="flex flex-col divide-y divide-base-300 rounded-field border border-base-300">
+      {{range .Steps}}
+      {{$k := index $.Data.Kinds .Kind}}
+      <li class="flex items-start gap-3 px-3 py-2.5">
+        <span class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg bg-base-200">{{icon (or $k.Icon "shield-check")}}</span>
+        <div class="min-w-0 flex-1">
+          <div class="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+            <span class="text-sm font-medium">{{.Guardrail}}</span>
+            <span class="text-xs opacity-60">{{or $k.Label .Kind}} · action {{.Action}}</span>
+            {{if .Via}}<span class="badge badge-ghost badge-xs gap-1">{{icon "layers" "opacity-60"}}{{.Via}}</span>{{end}}
+          </div>
+          {{if .Detail}}
+            {{if $k.ModelBacked}}
+            <div class="mt-1.5 rounded-field border border-base-300 bg-base-200/60 px-2.5 py-1.5">
+              <div class="mb-0.5 text-[10px] font-semibold uppercase tracking-wider opacity-50">Model verdict</div>
+              <div class="mono whitespace-pre-wrap break-words text-xs">{{.Detail}}</div>
+            </div>
+            {{else}}
+            <div class="mt-0.5 break-words text-xs opacity-70">{{.Detail}}</div>
+            {{end}}
+          {{end}}
+        </div>
+        {{template "outcome-badge" .Outcome}}
+      </li>
+      {{end}}
+    </ul>
+    {{if .Blocked}}{{if lt .Ran .Total}}<p class="mt-2 text-xs opacity-60">{{sub .Total .Ran}} guardrail(s) after the block were not evaluated.</p>{{end}}{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "events-table"}}
+{{with .Data}}
+{{if not .Events}}
+  <div class="glass-card">{{template "empty" dict "Icon" "scroll-text" "Title" "No interventions" "Body" "When a guardrail blocks, masks or logs something, it shows up here."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>When</th><th>Guardrail</th><th>Phase</th><th>Action</th><th>Key</th><th>Detail</th><th>Request</th></tr></thead>
+    <tbody>
+    {{range .Events}}
+      <tr>
+        <td class="whitespace-nowrap text-xs"><span title="{{dt .At}}">{{ago .At}}</span></td>
+        <td class="font-medium">{{.Guardrail}}</td>
+        <td>{{template "mode-badge" .Phase}}</td>
+        <td>{{template "action-badge" .Action}}</td>
+        <td class="text-sm">{{if .KeyID}}<a class="link link-hover" href="/ui/keys/{{.KeyID}}">{{or .KeyAlias "key"}}</a>{{else}}<span class="opacity-50">—</span>{{end}}</td>
+        <td class="max-w-md text-xs"><span class="line-clamp-2 break-words" title="{{.Detail}}">{{.Detail}}</span></td>
+        <td>{{if .RequestID}}<button type="button" class="mono link link-hover text-xs opacity-70" title="Copy request id" onclick="lgCopy({{.RequestID}})">{{truncate .RequestID 14}}</button>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Events}} event{{if ne (len .Events) 1}}s{{end}} · newest first{{if eq (len .Events) 200}} · showing the latest 200{{end}}</p>
+{{end}}
+{{end}}
+{{end}}

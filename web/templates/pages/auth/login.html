@@ -1,0 +1,36 @@
+{{define "content"}}
+{{with .Data}}
+    <div x-data="{tab: {{json (.Tab)}}}">
+      <h2 class="text-xl font-semibold">Sign in</h2>
+      <p class="mt-1 text-sm opacity-60">Manage models, keys, budgets and traffic.</p>
+
+      {{if $.Features.SSO}}
+        <a href="/ui/sso/login{{if .Next}}?next={{.Next}}{{end}}" class="btn btn-neutral mt-6 w-full gap-2">{{icon "shield-check"}} {{$.Features.SSOLabel}}</a>
+        <div class="divider text-xs opacity-60">or</div>
+      {{end}}
+
+      <div role="tablist" class="tabs tabs-box tabs-sm {{if not $.Features.SSO}}mt-6{{end}}">
+        <button type="button" role="tab" class="tab flex-1" :class="tab==='password' && 'tab-active'" @click="tab='password'">Email</button>
+        <button type="button" role="tab" class="tab flex-1" :class="tab==='master' && 'tab-active'" @click="tab='master'">Master key</button>
+      </div>
+
+      <div class="mt-4">{{template "form-error" .Error}}</div>
+
+      <form method="post" action="/ui/login" class="flex flex-col gap-3" x-show="tab==='password'">
+        <input type="hidden" name="next" value="{{.Next}}">
+        <input type="hidden" name="tab" value="password">
+        <label class="input w-full">{{icon "mail" "opacity-50"}}<input type="email" name="email" value="{{.Email}}" placeholder="you@company.com" autocomplete="username" required></label>
+        <label class="input w-full">{{icon "lock-keyhole" "opacity-50"}}<input type="password" name="password" placeholder="Password" autocomplete="current-password" required></label>
+        <button class="btn btn-primary mt-2 w-full">Sign in {{icon "arrow-right"}}</button>
+      </form>
+
+      <form method="post" action="/ui/login" class="flex flex-col gap-3" x-show="tab==='master'" x-cloak>
+        <input type="hidden" name="next" value="{{.Next}}">
+        <input type="hidden" name="tab" value="master">
+        <label class="input w-full">{{icon "key-round" "opacity-50"}}<input type="password" name="master_key" placeholder="Master key" autocomplete="off"></label>
+        <p class="text-xs opacity-60">The master key is set with <code class="mono">LEMONGATE_MASTER_KEY</code>. Use it for first-time setup or break-glass access.</p>
+        <button class="btn btn-primary mt-2 w-full">Sign in {{icon "arrow-right"}}</button>
+      </form>
+    </div>
+{{end}}
+{{end}}

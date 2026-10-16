@@ -1,0 +1,14 @@
+{{define "content"}}
+{{with .Data}}
+    {{/* invite acceptance */}}
+    <h2 class="text-xl font-semibold">Welcome, {{.User.DisplayName}}</h2>
+    <p class="mt-1 text-sm opacity-60">Choose a password to finish setting up your account.</p>
+    <form method="post" class="mt-6 flex flex-col gap-3">
+      {{template "form-error" .Error}}
+      <label class="input w-full">{{icon "mail" "opacity-50"}}<input type="email" value="{{.User.Email}}" disabled></label>
+      <label class="input w-full">{{icon "lock-keyhole" "opacity-50"}}<input type="password" name="password" placeholder="New password" minlength="8" required autofocus></label>
+      <label class="input w-full">{{icon "lock-keyhole" "opacity-50"}}<input type="password" name="confirm" placeholder="Confirm password" minlength="8" required></label>
+      <button class="btn btn-primary mt-2 w-full">Set password &amp; sign in</button>
+    </form>
+{{end}}
+{{end}}

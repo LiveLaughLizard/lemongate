@@ -1,0 +1,34 @@
+{{define "content"}}
+{{$p := .P}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Teams" "Sub" (or (and $p.CanViewAll "Group people and keys under shared budgets, limits and model access.") "Teams you belong to and the shared budgets they carry.") "Icon" "users"}}
+  {{if .CanCreate}}
+  <button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/teams/new" hx-target="#modal-body">{{icon "plus"}} New team</button>
+  {{end}}
+</div>
+
+<div class="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center">
+  <form id="team-filters" class="flex flex-1 flex-col gap-3 sm:flex-row" hx-get="/ui/teams/table" hx-target="#teams-table" hx-trigger="input changed delay:300ms from:input, change from:select">
+    <label class="input w-full sm:max-w-sm">{{icon "search" "opacity-50"}}<input type="search" name="q" placeholder="Search teams…"></label>
+    {{if and .Orgs (not .Deleted)}}
+    <select name="org" class="select w-full sm:w-56">
+      <option value="">All organizations</option>
+      {{range .Orgs}}<option value="{{.ID}}">{{.Name}}</option>{{end}}
+    </select>
+    {{end}}
+    <input type="hidden" name="deleted" value="{{if .Deleted}}1{{end}}">
+  </form>
+  {{if $p.CanViewAll}}
+  <div role="tablist" class="tabs tabs-box tabs-sm">
+    <a role="tab" href="/ui/teams" class="tab {{if not .Deleted}}tab-active{{end}}">Active</a>
+    <a role="tab" href="/ui/teams?deleted=1" class="tab {{if .Deleted}}tab-active{{end}}">Deleted</a>
+  </div>
+  {{end}}
+</div>
+
+<div id="teams-table" hx-get="/ui/teams/table{{if .Deleted}}?deleted=1{{end}}" hx-trigger="load, refresh-teams from:body" hx-include="#team-filters">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 5}}<div class="skeleton h-12 w-full"></div>{{end}}</div></div>
+</div>
+{{end}}
+{{end}}

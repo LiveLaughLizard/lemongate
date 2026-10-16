@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>API reference · {{.AppName}}</title>
+<link rel="icon" type="image/svg+xml" href="/static/img/favicon.svg">
+<link rel="stylesheet" href="/static/dist/app.css?v={{.Version}}">
+<script>
+  (function () {
+    try {
+      var t = localStorage.getItem("lg-theme");
+      if (!t) t = matchMedia("(prefers-color-scheme: dark)").matches ? "lemon-night" : "lemon";
+      document.documentElement.setAttribute("data-theme", t);
+    } catch (e) {}
+  })();
+  function lgToggleTheme() {
+    var t = document.documentElement.getAttribute("data-theme") === "lemon-night" ? "lemon" : "lemon-night";
+    document.documentElement.setAttribute("data-theme", t);
+    try { localStorage.setItem("lg-theme", t); } catch (e) {}
+  }
+  function lgCopyPre(btn) {
+    var pre = btn.closest("[data-copy-wrap]").querySelector("pre");
+    navigator.clipboard.writeText(pre.innerText).then(function () {
+      var old = btn.innerText; btn.innerText = "Copied"; setTimeout(function () { btn.innerText = old; }, 1200);
+    });
+  }
+</script>
+</head>
+<body class="min-h-screen bg-base-200/40">
+<header class="sticky top-0 z-30 border-b border-base-300 bg-base-100/85 backdrop-blur">
+  <div class="mx-auto flex max-w-7xl items-center gap-3 px-4 py-3">
+    <img src="/static/img/logo.svg" alt="" class="size-8">
+    <div class="flex-1">
+      <div class="brand-text text-lg font-extrabold leading-tight tracking-tight">{{.AppName}}</div>
+      <div class="text-xs opacity-60">Management API reference</div>
+    </div>
+    <a href="/api/openapi.json" class="btn btn-sm btn-ghost gap-2">{{index .Icons "json"}} OpenAPI 3.1</a>
+    <a href="/ui" class="btn btn-sm btn-ghost gap-2 max-sm:hidden">{{index .Icons "back"}} Console</a>
+    <button type="button" class="btn btn-sm btn-ghost btn-square" onclick="lgToggleTheme()" aria-label="Toggle theme">{{index .Icons "theme"}}</button>
+  </div>
+</header>
+
+<div class="mx-auto flex max-w-7xl gap-8 px-4 py-8">
+  <nav class="sticky top-20 hidden max-h-[calc(100vh-6rem)] w-60 shrink-0 overflow-y-auto lg:block">
+    <ul class="menu menu-sm w-full p-0">
+      <li><a href="#overview" class="font-semibold">Overview</a></li>
+      {{range .Groups}}
+      <li>
+        <details open>
+          <summary class="font-semibold">{{.Tag}}</summary>
+          <ul>
+            {{range .Routes}}<li><a href="#{{.ID}}" class="gap-2"><span class="w-10 font-mono text-[10px] font-bold {{if eq .Method "GET"}}text-info{{else if eq .Method "POST"}}text-success{{else if eq .Method "PATCH"}}text-warning{{else}}text-error{{end}}">{{.Method}}</span><span class="truncate">{{.Summary}}</span></a></li>{{end}}
+          </ul>
+        </details>
+      </li>
+      {{end}}
+    </ul>
+  </nav>
+
+  <main class="min-w-0 flex-1">
+    <section id="overview" class="glass-card mb-10 p-6 sm:p-8">
+      <div class="flex items-start gap-4">
+        <div class="brand-gradient flex size-12 shrink-0 items-center justify-center rounded-2xl text-primary-content shadow-md">{{index .Icons "book"}}</div>
+        <div>
+          <h1 class="page-title">Management API</h1>
+          <p class="page-sub mt-1">{{.Count}} endpoints for managing keys, users, teams, models, budgets and settings, and for reading usage, logs and health.</p>
+        </div>
+      </div>
+      <div class="mt-6 grid gap-6 md:grid-cols-2">
+        <div>
+          <h2 class="mb-2 flex items-center gap-2 font-semibold">{{index .Icons "lock"}} Authentication</h2>
+          <p class="text-sm opacity-80">Send <code class="rounded bg-base-200 px-1 font-mono">Authorization: Bearer &lt;key&gt;</code> with either the master key or a virtual key created with
+            <span class="badge badge-sm badge-primary">admin</span> scope (full access) or <span class="badge badge-sm badge-info badge-soft">management</span> scope
+            (acts with the owning user's console permissions — members manage their own keys and see their own usage). Inference-scope keys receive <code class="font-mono">403</code>.</p>
+        </div>
+        <div>
+          <h2 class="mb-2 font-semibold">Conventions</h2>
+          <ul class="list-disc space-y-1 pl-5 text-sm opacity-80">
+            <li>Base URL <code class="rounded bg-base-200 px-1 font-mono">{{.BaseURL}}/api/v1</code></li>
+            <li>JSON in and out. <code class="font-mono">PATCH</code> updates only the fields you send.</li>
+            <li>Collections return <code class="font-mono">{"data": [...], "count": n}</code>.</li>
+            <li>Errors return <code class="font-mono">{"error": {"message", "type"}}</code>.</li>
+            <li>Every change is recorded in the audit log.</li>
+          </ul>
+        </div>
+      </div>
+      <div class="mt-6" data-copy-wrap>
+        <div class="mb-2 flex items-center justify-between"><span class="text-xs font-semibold uppercase tracking-wider opacity-60">Try it</span>
+          <button type="button" class="btn btn-ghost btn-xs" onclick="lgCopyPre(this)">Copy</button></div>
+        <pre class="overflow-x-auto rounded-box bg-neutral p-4 font-mono text-xs text-neutral-content">export LEMONGATE_KEY=lg-...
+curl {{.BaseURL}}/api/v1/me -H "Authorization: Bearer $LEMONGATE_KEY"</pre>
+      </div>
+    </section>
+
+    {{range .Groups}}
+    <section class="mb-12" id="tag-{{.Tag}}">
+      <h2 class="text-2xl font-bold tracking-tight">{{.Tag}}</h2>
+      {{if .Desc}}<p class="mt-1 text-sm opacity-60">{{.Desc}}</p>{{end}}
+      <div class="mt-5 flex flex-col gap-4">
+        {{range .Routes}}
+        <article id="{{.ID}}" class="glass-card scroll-mt-24 p-5">
+          <div class="flex flex-wrap items-center gap-3">
+            <span class="badge badge-sm w-16 justify-center font-mono font-bold {{if eq .Method "GET"}}badge-info{{else if eq .Method "POST"}}badge-success{{else if eq .Method "PATCH"}}badge-warning{{else}}badge-error{{end}}">{{.Method}}</span>
+            <code class="font-mono text-sm font-semibold break-all">{{.Path}}</code>
+            <span class="ml-auto badge badge-ghost badge-sm gap-1">{{.Access}}</span>
+          </div>
+          <h3 class="mt-3 font-semibold">{{.Summary}}</h3>
+          {{if .Desc}}<p class="mt-1 text-sm opacity-75">{{.Desc}}</p>{{end}}
+          {{if .Query}}
+          <div class="mt-4 overflow-x-auto">
+            <table class="table table-sm">
+              <thead><tr><th>Query parameter</th><th>Type</th><th>Description</th></tr></thead>
+              <tbody>{{range .Query}}<tr><td class="font-mono text-xs">{{.Name}}</td><td class="text-xs opacity-70">{{.Type}}</td><td class="text-xs">{{.Desc}}</td></tr>{{end}}</tbody>
+            </table>
+          </div>
+          {{end}}
+          {{if .Body}}<p class="mt-3 text-xs opacity-60">Request body: <a class="link font-mono" href="/api/openapi.json">{{.Body}}</a> schema</p>{{end}}
+          <details class="mt-3">
+            <summary class="cursor-pointer text-xs font-semibold uppercase tracking-wider opacity-60">Example</summary>
+            <div class="relative mt-2" data-copy-wrap>
+              <button type="button" class="btn btn-ghost btn-xs absolute right-2 top-2 text-neutral-content" onclick="lgCopyPre(this)">Copy</button>
+              <pre class="overflow-x-auto rounded-box bg-neutral p-4 pr-16 font-mono text-xs text-neutral-content">{{.Curl}}</pre>
+            </div>
+          </details>
+        </article>
+        {{end}}
+      </div>
+    </section>
+    {{end}}
+    <p class="pb-8 text-center text-xs opacity-40">{{.AppName}} {{.Version}}</p>
+  </main>
+</div>
+</body>
+</html>

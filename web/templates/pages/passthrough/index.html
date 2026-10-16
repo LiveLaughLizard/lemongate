@@ -1,0 +1,31 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Pass-through routes" "Sub" "Expose internal HTTP services under /pt/<name>/ with gateway keys, injected credentials and request logging." "Icon" "route"}}
+  {{if .CanEdit}}
+  <button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/passthrough/new" hx-target="#modal-body">{{icon "plus"}} New route</button>
+  {{end}}
+</div>
+
+<div id="routes-table" hx-get="/ui/passthrough/table" hx-trigger="load, refresh-routes from:body">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 3}}<div class="skeleton h-12 w-full"></div>{{end}}</div></div>
+</div>
+
+<div class="mt-8 mb-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+  <div>
+    <h2 class="text-lg font-semibold">Recent calls</h2>
+    <p class="text-sm opacity-60">The latest 50 pass-through requests. Full details are in <a class="link" href="/ui/logs">request logs</a>.</p>
+  </div>
+  <form id="call-filters" class="flex gap-2" hx-get="/ui/passthrough/calls" hx-target="#calls-table" hx-trigger="change">
+    <select name="route" class="select select-sm w-48">
+      <option value="">All routes</option>
+      {{range .Routes}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+    </select>
+    <button type="button" class="btn btn-ghost btn-sm btn-square" title="Refresh" hx-get="/ui/passthrough/calls" hx-include="#call-filters" hx-target="#calls-table">{{icon "refresh-cw"}}</button>
+  </form>
+</div>
+<div id="calls-table" hx-get="/ui/passthrough/calls" hx-trigger="load, refresh-routes from:body" hx-include="#call-filters">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 4}}<div class="skeleton h-8 w-full"></div>{{end}}</div></div>
+</div>
+{{end}}
+{{end}}

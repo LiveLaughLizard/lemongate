@@ -1,0 +1,450 @@
+{{/* Connection state of an upstream: mcpgw.Status */}}
+{{define "mcp-dot"}}
+{{$s := .State}}
+<span class="inline-flex items-center gap-1.5" {{if and .LastError (eq $s "error")}}title="{{.LastError}}"{{end}}>
+  <span class="relative flex size-2.5">
+    {{if eq $s "ok"}}<span class="absolute inline-flex size-full animate-ping rounded-full bg-success opacity-60"></span>{{end}}
+    <span class="relative inline-flex size-2.5 rounded-full {{if eq $s "ok"}}bg-success{{else if eq $s "error"}}bg-error{{else if eq $s "disabled"}}bg-base-content/20{{else}}bg-warning{{end}}"></span>
+  </span>
+  <span class="text-xs">{{if eq $s "ok"}}Connected{{else if eq $s "error"}}Unreachable{{else if eq $s "disabled"}}Disabled{{else}}Connecting…{{end}}</span>
+</span>
+{{end}}
+
+{{define "mcp-transport"}}
+<span class="badge badge-sm badge-outline gap-1">{{if eq . "sse"}}{{icon "radio"}} SSE{{else}}{{icon "zap"}} Streamable HTTP{{end}}</span>
+{{end}}
+
+{{/* Client setup card: dict "Endpoint" "Config" */}}
+{{define "mcp-connect"}}
+<div class="glass-card flex flex-col gap-4 p-5">
+  <div>
+    <div class="mb-1.5 text-xs font-semibold uppercase tracking-wider opacity-60">Gateway endpoint</div>
+    {{template "copy-field" .Endpoint}}
+    <p class="mt-2 text-xs opacity-60">Streamable HTTP. Authenticate with any LemonGate API key; the key's MCP server list (or its team's) decides which tools it sees.</p>
+  </div>
+  <div>
+    <div class="mb-1.5 flex items-center justify-between">
+      <span class="text-xs font-semibold uppercase tracking-wider opacity-60">Client configuration</span>
+      <button type="button" class="btn btn-ghost btn-xs gap-1" onclick="lgCopy({{.Config}})">{{icon "copy"}} Copy</button>
+    </div>
+    <pre class="mono overflow-x-auto rounded-field bg-base-200 p-3 text-xs leading-relaxed">{{.Config}}</pre>
+  </div>
+  <div>
+    <div class="mb-1.5 text-xs font-semibold uppercase tracking-wider opacity-60">Try it with curl</div>
+    <div class="mockup-code bg-neutral text-neutral-content text-[11px]">
+<pre data-prefix="$"><code>curl {{.Endpoint}} \</code></pre>
+<pre data-prefix=" "><code>  -H "Authorization: Bearer $LEMONGATE_KEY" \</code></pre>
+<pre data-prefix=" "><code>  -H "Content-Type: application/json" \</code></pre>
+<pre data-prefix=" "><code>  -H "Accept: application/json, text/event-stream" \</code></pre>
+<pre data-prefix=" "><code>  -d '{"jsonrpc":"2.0","id":1,"method":"initialize",</code></pre>
+<pre data-prefix=" "><code>       "params":{"protocolVersion":"2025-06-18",</code></pre>
+<pre data-prefix=" "><code>       "capabilities":{},"clientInfo":{"name":"curl","version":"1"}}}'</code></pre>
+    </div>
+    <p class="mt-2 text-xs opacity-60">Reuse the returned <span class="mono">Mcp-Session-Id</span> header on follow-up requests (<span class="mono">tools/list</span>, <span class="mono">tools/call</span>).</p>
+  </div>
+</div>
+{{end}}
+
+{{define "mcp-servers"}}
+{{with .Data}}
+<div class="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{template "stat" dict "Label" "Servers" "Value" (num (len .Cards)) "Icon" "server" "Hint" (printf "%d connected" .Online)}}
+  {{template "stat" dict "Label" "Tools" "Value" (num .Tools) "Icon" "wrench" "Tone" "secondary" "Hint" "across connected servers"}}
+  {{template "stat" dict "Label" "Calls · 24h" "Value" (compact .Totals.Calls) "Icon" "activity" "Tone" "accent" "Hint" "through gateway and console"}}
+  {{template "stat" dict "Label" "Errors · 24h" "Value" (compact .Totals.Errors) "Icon" "circle-x" "Tone" (or (and .Totals.Errors "error") "info") "Hint" (printf "%.1f%% of calls" .Totals.ErrorRate)}}
+</div>
+{{if not .Cards}}
+  <div class="glass-card">
+    {{template "empty" dict "Icon" "plug-zap" "Title" "No MCP servers yet" "Body" (or (and .IsAdmin "Register an upstream MCP server to expose its tools through the gateway.") "No MCP servers have been made available to you yet. Ask an admin to grant access to your key or team.")}}
+    {{if .IsAdmin}}<div class="-mt-6 flex justify-center pb-10"><button class="btn btn-primary btn-sm gap-2" hx-get="/ui/mcp/new" hx-target="#modal-body">{{icon "plus"}} Add server</button></div>{{end}}
+  </div>
+{{else}}
+<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Cards}}
+  {{$s := .Server}}
+  <div class="glass-card card-hover flex flex-col gap-4 p-5 {{if not $s.Enabled}}opacity-70{{end}}">
+    <div class="flex items-start justify-between gap-3">
+      <a href="/ui/mcp/{{$s.ID}}" class="group flex min-w-0 items-center gap-3">
+        <div class="flex size-11 shrink-0 items-center justify-center rounded-xl {{if $s.Enabled}}bg-primary/25{{else}}bg-base-200{{end}}">{{icon "plug-zap" "text-xl"}}</div>
+        <div class="min-w-0">
+          <div class="truncate font-semibold group-hover:underline">{{$s.Name}}</div>
+          {{template "mcp-dot" .Status}}
+        </div>
+      </a>
+      {{if $.Data.IsAdmin}}
+      <input type="checkbox" class="toggle toggle-sm toggle-success mt-1" aria-label="Enabled" {{if $s.Enabled}}checked{{end}}
+        hx-post="/ui/mcp/{{$s.ID}}/toggle" {{if $s.Enabled}}hx-confirm="Disable {{$s.Name}}? Its tools disappear from the gateway immediately."{{end}}>
+      {{end}}
+    </div>
+    <div class="flex min-w-0 items-center gap-1.5 text-xs opacity-60">{{icon "link"}}<span class="mono truncate" title="{{$s.URL}}">{{$s.URL}}</span></div>
+    {{if $s.Description}}<p class="line-clamp-2 text-sm opacity-75">{{$s.Description}}</p>{{end}}
+    <div class="flex flex-wrap gap-1.5">
+      {{template "mcp-transport" $s.Transport}}
+      {{if $s.AvailableToAll}}<span class="badge badge-sm badge-success badge-soft gap-1">{{icon "globe"}} Available to all keys</span>{{else}}<span class="badge badge-sm badge-ghost gap-1">{{icon "key-round"}} Granted keys &amp; teams</span>{{end}}
+      {{if $s.CredentialName}}<span class="badge badge-sm badge-ghost gap-1">{{icon "lock-keyhole"}} {{$s.CredentialName}}</span>{{end}}
+    </div>
+    <div class="mt-auto grid grid-cols-3 divide-x divide-base-300 border-t border-base-300 pt-3 text-center">
+      <div><div class="text-lg font-semibold tabular-nums">{{.Status.ToolCount}}</div><div class="text-[11px] uppercase tracking-wider opacity-50">Tools</div></div>
+      <div><div class="text-lg font-semibold tabular-nums">{{compact .Stats.Calls}}</div><div class="text-[11px] uppercase tracking-wider opacity-50">Calls 24h</div></div>
+      <div><div class="text-lg font-semibold tabular-nums {{if .Stats.Errors}}text-error{{end}}">{{compact .Stats.Errors}}</div><div class="text-[11px] uppercase tracking-wider opacity-50">Errors</div></div>
+    </div>
+    <div class="flex items-center justify-between gap-2">
+      <a href="/ui/mcp/{{$s.ID}}" class="btn btn-sm btn-ghost gap-2">{{icon "wrench"}} Browse tools</a>
+      {{if $.Data.IsAdmin}}
+      <div class="dropdown dropdown-end dropdown-top">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+        <ul tabindex="0" class="menu dropdown-content z-20 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+          <li><button hx-get="/ui/mcp/{{$s.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+          <li><button class="text-error" hx-post="/ui/mcp/{{$s.ID}}/delete" hx-confirm="Delete MCP server {{$s.Name}}? It is also removed from every key and team allow-list.">{{icon "trash-2"}} Delete</button></li>
+        </ul>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "mcp-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/mcp"{{else}}hx-post="/ui/mcp/{{.Server.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-2xl"
+  x-data="{cred: {{json (deref .Server.CredentialID)}}}">
+  {{template "modal-head" dict "Title" (or (and .IsNew "Add MCP server") "Edit MCP server") "Sub" "Upstream servers are reached over Streamable HTTP or SSE. Their tools are exposed as name__tool." "Icon" "plug-zap"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-5">
+      <fieldset class="fieldset min-w-0 sm:col-span-2">
+        <legend class="fieldset-legend">Name</legend>
+        <input name="name" value="{{.Server.Name}}" class="input validator w-full font-mono" placeholder="docs-search" required
+          pattern="[a-z0-9][a-z0-9_\-]{0,62}" maxlength="63" title="Lowercase letters, digits, - and _">
+        <p class="label whitespace-normal text-xs">Prefixes tool names: <span class="mono">name__tool</span></p>
+      </fieldset>
+      <fieldset class="fieldset min-w-0 sm:col-span-3">
+        <legend class="fieldset-legend">URL</legend>
+        <label class="input validator w-full">{{icon "link" "opacity-50"}}<input name="url" type="url" value="{{.Server.URL}}" placeholder="https://mcp.internal.example/mcp" required></label>
+        <p class="label whitespace-normal text-xs">The MCP endpoint (for SSE, the event stream URL).</p>
+      </fieldset>
+    </div>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Transport</legend>
+      <div class="grid grid-cols-1 gap-2 sm:grid-cols-2">
+        <label class="flex cursor-pointer items-start gap-3 rounded-field border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="transport" value="http" class="radio radio-sm radio-primary mt-0.5" {{if ne .Server.Transport "sse"}}checked{{end}}>
+          <span><span class="block text-sm font-medium">Streamable HTTP</span><span class="text-xs opacity-60">Current MCP transport (recommended)</span></span>
+        </label>
+        <label class="flex cursor-pointer items-start gap-3 rounded-field border border-base-300 p-3 has-[:checked]:border-primary has-[:checked]:bg-primary/10">
+          <input type="radio" name="transport" value="sse" class="radio radio-sm radio-primary mt-0.5" {{if eq .Server.Transport "sse"}}checked{{end}}>
+          <span><span class="block text-sm font-medium">SSE</span><span class="text-xs opacity-60">Legacy HTTP + Server-Sent Events</span></span>
+        </label>
+      </div>
+    </fieldset>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Credential</legend>
+        <select name="credential_id" class="select w-full" x-model="cred">
+          <option value="">No authentication</option>
+          {{$cid := deref .Server.CredentialID}}
+          {{range .Credentials}}<option value="{{.ID}}" {{if eq .ID $cid}}selected{{end}}>{{.Name}}{{if .Hint}} · {{.Hint}}{{end}}</option>{{end}}
+        </select>
+        {{if not .Credentials}}<p class="label text-xs">Add secrets under <a class="link" href="/ui/credentials">Credentials</a>.</p>{{end}}
+      </fieldset>
+      <fieldset class="fieldset" x-show="cred" x-cloak>
+        <legend class="fieldset-legend">Auth header</legend>
+        <input name="auth_header" value="{{.Server.AuthHeader}}" class="input w-full font-mono" placeholder="Authorization">
+      </fieldset>
+      <fieldset class="fieldset" x-show="cred" x-cloak>
+        <legend class="fieldset-legend">Value prefix</legend>
+        <input name="auth_prefix" value="{{.Server.AuthPrefix}}" class="input w-full font-mono" placeholder="Bearer ">
+        <p class="label text-xs">Sent as prefix + secret.</p>
+      </fieldset>
+    </div>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Description</legend>
+      <textarea name="description" rows="2" class="textarea w-full" placeholder="What these tools are for">{{.Server.Description}}</textarea>
+    </fieldset>
+    <div class="flex flex-col gap-3 rounded-field border border-base-300 p-4">
+      <label class="flex cursor-pointer items-start justify-between gap-4">
+        <span><span class="block text-sm font-medium">Available to all keys</span><span class="text-xs opacity-60">Otherwise only keys and teams that list this server can use it.</span></span>
+        <input type="checkbox" name="available_to_all" class="toggle toggle-primary" {{if .Server.AvailableToAll}}checked{{end}}>
+      </label>
+      <div class="divider my-0"></div>
+      <label class="flex cursor-pointer items-start justify-between gap-4">
+        <span><span class="block text-sm font-medium">Enabled</span><span class="text-xs opacity-60">Disabled servers are hidden from the gateway.</span></span>
+        <input type="checkbox" name="enabled" class="toggle toggle-success" {{if .Server.Enabled}}checked{{end}}>
+      </label>
+    </div>
+    <div>
+      <button type="button" class="btn btn-sm btn-outline gap-2" hx-post="/ui/mcp/test" hx-include="closest form" hx-target="#mcp-test-result" hx-indicator="#mcp-test-spin">
+        <span id="mcp-test-spin" class="loading loading-spinner loading-xs htmx-indicator"></span>{{icon "plug"}} Test connection
+      </button>
+      <div id="mcp-test-result" class="mt-3"></div>
+    </div>
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Add server") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "mcp-test-result"}}
+{{with .Data}}
+{{if .Error}}
+<div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-x"}}<div><div class="font-medium">Connection failed</div><div class="mono break-all text-xs opacity-80">{{.Error}}</div></div></div>
+{{else}}
+<div role="alert" class="alert alert-success alert-soft text-sm">{{icon "circle-check"}}
+  <div class="min-w-0">
+    <div class="font-medium">Connected in {{.MS}} ms · {{len .Tools}} tool{{if ne (len .Tools) 1}}s{{end}}</div>
+    {{if .Tools}}<div class="mt-2 flex flex-wrap gap-1">{{range .Tools}}<span class="badge badge-sm badge-outline font-mono" title="{{.Description}}">{{.Name}}</span>{{end}}</div>{{end}}
+  </div>
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "mcp-calls"}}
+{{with .Data}}
+{{if not .Calls}}
+  <div class="glass-card">{{template "empty" dict "Icon" "activity" "Title" "No tool calls in this period" "Body" "Calls made through the gateway or the tool runner show up here."}}</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table class="table table-sm">
+    <thead><tr><th>When</th>{{if not .Compact}}<th>Server</th>{{end}}<th>Tool</th><th>Caller</th>{{if not .Compact}}<th class="text-right">Duration</th>{{end}}<th>Status</th></tr></thead>
+    <tbody>
+    {{range .Calls}}
+      <tr>
+        <td class="whitespace-nowrap text-xs" title="{{dt .At}}">{{ago .At}}</td>
+        {{if not $.Data.Compact}}<td class="font-medium">{{.Server}}</td>{{end}}
+        <td class="mono text-xs">{{.Tool}}</td>
+        <td class="whitespace-nowrap text-xs">
+          {{if .KeyLabel}}<a class="flex items-center gap-1 hover:underline" href="/ui/keys/{{deref .KeyID}}">{{icon "key-round" "opacity-50"}}{{.KeyLabel}}</a>
+          {{else if .UserEmail}}<span class="flex items-center gap-1">{{icon "monitor" "opacity-50"}}{{.UserEmail}}</span>
+          {{else}}<span class="flex items-center gap-1 opacity-70">{{icon "shield" "opacity-50"}}master key</span>{{end}}
+        </td>
+        {{if not $.Data.Compact}}<td class="whitespace-nowrap text-right text-xs tabular-nums">{{num .DurationMS}} ms</td>{{end}}
+        <td class="whitespace-nowrap">
+          {{if .OK}}<span class="badge badge-success badge-soft badge-sm">ok</span>{{if $.Data.Compact}}<span class="ml-1 text-[11px] tabular-nums opacity-50">{{num .DurationMS}} ms</span>{{end}}
+          {{else}}<span class="badge badge-error badge-soft badge-sm" title="{{.Error}}">error</span>
+            {{if .Error}}<div class="mt-0.5 max-w-xs truncate text-[11px] opacity-60" title="{{.Error}}">{{.Error}}</div>{{end}}
+          {{end}}
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-2 text-xs opacity-50">Showing {{len .Calls}} most recent call{{if ne (len .Calls) 1}}s{{end}}.</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "mcp-server-head"}}
+{{with .Data}}
+{{$s := .Server}}
+<div id="mcp-server" hx-get="/ui/mcp/{{$s.ID}}" hx-trigger="refresh-mcp-server from:body" hx-target="#mcp-server" hx-swap="outerHTML" hx-disinherit="*">
+  <div class="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+    <div class="flex min-w-0 items-center gap-4">
+      <div class="flex size-14 shrink-0 items-center justify-center rounded-2xl {{if $s.Enabled}}brand-gradient text-primary-content{{else}}bg-base-200{{end}} shadow-md">{{icon "plug-zap" "text-2xl"}}</div>
+      <div class="min-w-0">
+        <h1 class="page-title flex flex-wrap items-center gap-2">{{$s.Name}}
+          {{if not $s.Enabled}}<span class="badge badge-ghost">disabled</span>{{end}}
+        </h1>
+        <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm opacity-80">
+          {{template "mcp-dot" .Status}}
+          <span class="mono truncate text-xs opacity-70" title="{{$s.URL}}">{{$s.URL}}</span>
+        </div>
+      </div>
+    </div>
+    {{if .CanEdit}}
+    <div class="flex flex-wrap gap-2">
+      <button class="btn btn-sm gap-2" hx-get="/ui/mcp/{{$s.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button>
+      {{if $s.Enabled}}<button class="btn btn-sm gap-2" hx-post="/ui/mcp/{{$s.ID}}/toggle" hx-confirm="Disable {{$s.Name}}? Its tools disappear from the gateway immediately.">{{icon "unplug"}} Disable</button>
+      {{else}}<button class="btn btn-sm gap-2" hx-post="/ui/mcp/{{$s.ID}}/toggle">{{icon "plug"}} Enable</button>{{end}}
+      <button class="btn btn-sm btn-error btn-outline gap-2" hx-post="/ui/mcp/{{$s.ID}}/delete?from=detail" hx-confirm="Delete MCP server {{$s.Name}}? It is also removed from every key and team allow-list.">{{icon "trash-2"}} Delete</button>
+    </div>
+    {{end}}
+  </div>
+
+  {{if and .Status.LastError (eq .Status.State "error")}}
+  <div role="alert" class="alert alert-error alert-soft mb-6 text-sm">{{icon "circle-alert"}}<div><div class="font-medium">Last connection attempt failed {{ago .Status.LastErrorAt}}</div><div class="mono break-all text-xs opacity-80">{{.Status.LastError}}</div></div></div>
+  {{end}}
+
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" "Tools" "Value" (num .Status.ToolCount) "Icon" "wrench" "Hint" (or (and (not .Status.ToolsAt.IsZero) (printf "listed %s" (ago .Status.ToolsAt))) "not listed yet")}}
+    {{template "stat" dict "Label" "Calls · 24h" "Value" (compact .Stats.Calls) "Icon" "activity" "Tone" "secondary" "Hint" (printf "%d failed" .Stats.Errors)}}
+    {{template "stat" dict "Label" "Error rate · 24h" "Value" (printf "%.1f%%" .Stats.ErrorRate) "Icon" "circle-x" "Tone" (or (and .Stats.Errors "error") "success")}}
+    {{template "stat" dict "Label" "Avg latency · 24h" "Value" (printf "%s ms" (num .Stats.AvgMS)) "Icon" "timer" "Tone" "info"}}
+  </div>
+
+  <div class="mt-6 grid grid-cols-1 gap-6 lg:grid-cols-3">
+    <div class="glass-card p-5 lg:col-span-2">
+      <h2 class="mb-3 font-semibold">Configuration</h2>
+      <dl class="kv grid grid-cols-1 gap-x-6 sm:grid-cols-2">
+        <div><dt>Transport</dt><dd>{{template "mcp-transport" $s.Transport}}</dd></div>
+        <div><dt>Access</dt><dd>{{if $s.AvailableToAll}}Every API key{{else}}Keys &amp; teams that list <span class="mono">{{$s.Name}}</span>{{end}}</dd></div>
+        <div><dt>Authentication</dt><dd>{{if $s.CredentialName}}<span class="mono">{{$s.AuthHeader}}: {{$s.AuthPrefix}}••••</span> from <a class="link" href="/ui/credentials">{{$s.CredentialName}}</a>{{else}}None{{end}}</dd></div>
+        <div><dt>Updated</dt><dd>{{ago $s.UpdatedAt}}</dd></div>
+        {{if $s.Description}}<div class="sm:col-span-2"><dt>Description</dt><dd class="font-normal">{{$s.Description}}</dd></div>{{end}}
+      </dl>
+    </div>
+    <div class="glass-card p-5">
+      <h2 class="mb-3 font-semibold">Via the gateway</h2>
+      <p class="text-sm opacity-70">Clients connected to <span class="mono">{{.Endpoint}}</span> see this server's tools prefixed with <span class="badge badge-sm badge-outline font-mono">{{$s.Name}}__</span></p>
+      <a href="/ui/mcp" class="btn btn-ghost btn-sm mt-3 gap-2">{{icon "cable"}} Client setup {{icon "arrow-right"}}</a>
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "mcp-tools"}}
+{{with .Data}}
+{{if .Error}}
+<div role="alert" class="alert {{if .Tools}}alert-warning{{else}}alert-error{{end}} alert-soft mb-4 text-sm">{{icon "triangle-alert"}}<div><div class="font-medium">{{if .Tools}}Showing cached tools — the latest refresh failed{{else}}Could not list tools{{end}}</div><div class="mono break-all text-xs opacity-80">{{.Error}}</div></div></div>
+{{end}}
+{{if not .Tools}}
+  {{if not .Error}}<div class="glass-card">{{template "empty" dict "Icon" "wrench" "Title" "No tools" "Body" "This server does not expose any tools."}}</div>{{end}}
+{{else}}
+<div class="flex flex-col gap-3">
+  {{range .Tools}}
+  <div class="glass-card p-4" x-data="{open: false}">
+    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div class="min-w-0 flex-1">
+        <div class="flex flex-wrap items-center gap-2">
+          <span class="flex size-8 items-center justify-center rounded-lg bg-secondary/20 text-secondary">{{icon "wrench"}}</span>
+          <span class="font-mono font-semibold">{{.Name}}</span>
+          {{if .Title}}<span class="text-sm opacity-60">{{.Title}}</span>{{end}}
+          {{if .ReadOnly}}<span class="badge badge-info badge-soft badge-xs">read-only</span>{{end}}
+          {{if .Destructive}}<span class="badge badge-warning badge-soft badge-xs">destructive</span>{{end}}
+        </div>
+        {{if .Description}}<p class="mt-2 whitespace-pre-line text-sm opacity-80">{{.Description}}</p>{{end}}
+        {{if .Params}}
+        <div class="mt-3 flex flex-wrap gap-1.5">
+          {{range .Params}}<span class="badge badge-sm {{if .Required}}badge-outline font-semibold{{else}}badge-ghost{{end}} font-mono" title="{{.Description}}">{{.Name}}{{if .Required}}<span class="text-error">*</span>{{end}}<span class="font-normal opacity-50">: {{.Type}}</span></span>{{end}}
+        </div>
+        {{else}}<p class="mt-3 text-xs opacity-50">No arguments</p>{{end}}
+      </div>
+      <div class="flex shrink-0 gap-2">
+        <button type="button" class="btn btn-ghost btn-sm gap-1" @click="open=!open">{{icon "braces"}} Schema</button>
+        {{if $.Data.CanRun}}<button class="btn btn-primary btn-sm gap-1" hx-get="/ui/mcp/{{$.Data.Server.ID}}/run?tool={{.Name}}" hx-target="#modal-body">{{icon "play"}} Run</button>{{end}}
+      </div>
+    </div>
+    <div x-show="open" x-cloak class="mt-4 grid grid-cols-1 gap-3 {{if .Output}}lg:grid-cols-2{{end}}">
+      <div>
+        <div class="mb-1 flex items-center justify-between text-xs font-semibold uppercase tracking-wider opacity-60">
+          <span>Input schema</span><span class="mono normal-case tracking-normal">{{.Gateway}}</span>
+        </div>
+        <pre class="mono max-h-80 overflow-auto rounded-field bg-base-200 p-3 text-xs">{{pretty .Schema}}</pre>
+      </div>
+      {{if .Output}}
+      <div>
+        <div class="mb-1 text-xs font-semibold uppercase tracking-wider opacity-60">Output schema</div>
+        <pre class="mono max-h-80 overflow-auto rounded-field bg-base-200 p-3 text-xs">{{pretty .Output}}</pre>
+      </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "mcp-run-form"}}
+{{with .Data}}
+<form hx-post="/ui/mcp/{{.Server.ID}}/run" hx-target="#run-result" hx-swap="innerHTML" data-modal-size="max-w-4xl" x-data="{raw: {{if .Raw}}true{{else}}false{{end}}}">
+  {{template "modal-head" dict "Title" (printf "Run %s" .Tool.Name) "Sub" (or .Tool.Description (printf "Tool on %s" .Server.Name)) "Icon" "play"}}
+  <input type="hidden" name="tool" value="{{.Tool.Name}}">
+  <input type="hidden" name="raw" :value="raw ? 'true' : ''">
+  <div class="grid grid-cols-1 gap-6 px-6 py-5 lg:grid-cols-2">
+    <div class="flex min-w-0 flex-col gap-3">
+      <div class="flex items-center justify-between">
+        <span class="text-xs font-semibold uppercase tracking-wider opacity-60">Arguments</span>
+        {{if .Tool.Params}}
+        <div role="tablist" class="tabs tabs-box tabs-xs">
+          <button type="button" role="tab" class="tab" :class="!raw && 'tab-active'" @click="raw=false">Form</button>
+          <button type="button" role="tab" class="tab" :class="raw && 'tab-active'" @click="raw=true">JSON</button>
+        </div>
+        {{end}}
+      </div>
+      {{if not .Tool.Params}}
+        <p class="rounded-field bg-base-200 p-3 text-sm opacity-70">This tool takes no arguments.</p>
+      {{else}}
+      <div x-show="!raw" class="flex flex-col gap-1">
+        {{$vals := .Values}}
+        {{range .Tool.Params}}
+        <fieldset class="fieldset py-1">
+          <legend class="fieldset-legend"><span class="font-mono">{{.Name}}</span>{{if .Required}}<span class="text-error">*</span>{{end}}<span class="badge badge-ghost badge-xs font-mono">{{.Type}}</span></legend>
+          {{if eq .Type "boolean"}}
+            <select name="arg.{{.Name}}" class="select select-sm w-full">
+              {{$v := index $vals .Name}}
+              {{if not .Required}}<option value="">(not set)</option>{{end}}
+              <option value="true" {{if eq $v "true"}}selected{{end}}>true</option>
+              <option value="false" {{if eq $v "false"}}selected{{end}}>false</option>
+            </select>
+          {{else if eq .Type "enum"}}
+            {{$v := index $vals .Name}}
+            <select name="arg.{{.Name}}" class="select select-sm w-full">
+              {{if not .Required}}<option value="">(not set)</option>{{end}}
+              {{range .Enum}}<option value="{{.}}" {{if eq . $v}}selected{{end}}>{{.}}</option>{{end}}
+            </select>
+          {{else if eq .Type "json"}}
+            <textarea name="arg.{{.Name}}" rows="3" class="textarea textarea-sm w-full font-mono text-xs" placeholder="JSON value">{{index $vals .Name}}</textarea>
+          {{else if .Multiline}}
+            <textarea name="arg.{{.Name}}" rows="3" class="textarea textarea-sm w-full" {{if .Required}}required{{end}}>{{index $vals .Name}}</textarea>
+          {{else}}
+            <input name="arg.{{.Name}}" value="{{index $vals .Name}}" class="input input-sm w-full {{if ne .Type "string"}}font-mono{{end}}"
+              {{if eq .Type "integer"}}type="number" step="1"{{else if eq .Type "number"}}type="number" step="any"{{else}}type="text"{{end}} {{if .Required}}required{{end}}>
+          {{end}}
+          {{if .Description}}<p class="label whitespace-normal text-xs">{{.Description}}</p>{{end}}
+        </fieldset>
+        {{end}}
+      </div>
+      <div x-show="raw" x-cloak>
+        <textarea name="args" rows="12" class="textarea w-full font-mono text-xs" spellcheck="false">{{.Args}}</textarea>
+        <p class="mt-1 text-xs opacity-60">A JSON object matching the input schema.</p>
+      </div>
+      {{end}}
+    </div>
+    <div class="flex min-w-0 flex-col gap-3">
+      <span class="text-xs font-semibold uppercase tracking-wider opacity-60">Result</span>
+      <div id="run-result" class="min-h-40">
+        <div class="flex h-40 flex-col items-center justify-center gap-2 rounded-field border border-dashed border-base-300 text-sm opacity-60">{{icon "play" "text-xl"}}Run the tool to see its output</div>
+      </div>
+    </div>
+  </div>
+  <div class="sticky bottom-0 flex items-center justify-between gap-2 border-t border-base-300 bg-base-100 px-6 py-4">
+    <span class="hidden text-xs opacity-60 sm:block">Calls are logged and attributed to you.</span>
+    <div class="flex gap-2">
+      <button type="button" class="btn btn-ghost" onclick="document.getElementById('modal').close()">Close</button>
+      <button type="submit" class="btn btn-primary gap-2"><span class="loading loading-spinner loading-sm htmx-indicator"></span>{{icon "play"}} Run tool</button>
+    </div>
+  </div>
+</form>
+{{end}}
+{{end}}
+
+{{define "mcp-run-result"}}
+{{with .Data}}
+{{if .Error}}
+<div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-x"}}<div class="min-w-0"><div class="font-medium">Call failed</div><div class="mono break-all text-xs opacity-80">{{.Error}}</div></div></div>
+{{else}}
+<div class="flex flex-col gap-3">
+  <div class="flex items-center gap-2 text-sm">
+    {{if .IsError}}<span class="badge badge-error badge-soft gap-1">{{icon "circle-x"}} tool error</span>{{else}}<span class="badge badge-success badge-soft gap-1">{{icon "circle-check"}} success</span>{{end}}
+    <span class="text-xs opacity-60">{{.MS}} ms · {{len .Parts}} content block{{if ne (len .Parts) 1}}s{{end}}</span>
+  </div>
+  {{range .Parts}}
+    {{if eq .Kind "image"}}<img src="{{.Src}}" alt="tool image output" class="max-h-80 rounded-field border border-base-300">
+    {{else}}<pre class="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-field {{if $.Data.IsError}}bg-error/10{{else}}bg-base-200{{end}} p-3 text-xs {{if eq .Kind "json"}}mono{{end}}">{{.Text}}</pre>{{end}}
+  {{end}}
+  {{if .Structured}}
+  <div>
+    <div class="mb-1 text-xs font-semibold uppercase tracking-wider opacity-60">Structured content</div>
+    <pre class="mono max-h-60 overflow-auto rounded-field bg-base-200 p-3 text-xs">{{pretty .Structured}}</pre>
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+{{end}}

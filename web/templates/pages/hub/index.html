@@ -1,0 +1,100 @@
+{{define "content"}}
+{{with .Data}}
+<div x-data="{q: '', mode: '', items: [],
+  match(el) { const q = this.q.trim().toLowerCase(); return (!this.mode || el.dataset.mode === this.mode) && (!q || el.dataset.search.includes(q)); },
+  get shown() { return this.items.filter(el => this.match(el)).length; } }"
+  x-init="items = Array.from($root.querySelectorAll('[data-hub-card]'))">
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Model hub" "Sub" (or (and .Scoped "Every model you can call through this gateway.") "Every model served by this gateway, with pricing, limits and live health.") "Icon" "boxes"}}
+  <a href="/ui/playground" class="btn btn-primary gap-2 shadow-sm">{{icon "sparkles"}} Open playground</a>
+</div>
+
+{{if .Models}}
+<div class="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+  <label class="input w-full sm:max-w-sm">{{icon "search" "opacity-50"}}<input type="search" x-model="q" placeholder="Search models, tags, aliases…"></label>
+  <div role="tablist" class="tabs tabs-box tabs-sm w-fit flex-wrap">
+    <button type="button" role="tab" class="tab" :class="mode === '' && 'tab-active'" @click="mode = ''">All <span class="badge badge-xs badge-ghost ml-1.5">{{len .Models}}</span></button>
+    {{range .Modes}}<button type="button" role="tab" class="tab capitalize" data-mode="{{.}}" :class="mode === $el.dataset.mode && 'tab-active'" @click="mode = $el.dataset.mode">{{.}}</button>{{end}}
+  </div>
+  <span class="text-xs opacity-50 sm:ml-auto" x-text="shown + ' of {{len .Models}} models'"></span>
+</div>
+
+<div class="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Models}}
+  <article data-hub-card data-search="{{.Search}}" data-mode="{{.ModeLabel}}" x-show="match($el)"
+           class="glass-card card-hover group relative flex flex-col overflow-hidden">
+    <div class="brand-gradient absolute inset-x-0 top-0 h-1 opacity-70"></div>
+    <div class="flex flex-1 flex-col gap-4 p-5">
+      <div class="flex items-start gap-3">
+        <div class="flex size-11 shrink-0 items-center justify-center rounded-2xl {{if eq .ModeLabel "chat"}}brand-gradient text-primary-content{{else if eq .ModeLabel "embedding"}}bg-info/20 text-info{{else if eq .ModeLabel "rerank"}}bg-accent/20 text-accent{{else}}bg-secondary/20 text-secondary{{end}} shadow-sm">
+          {{template "hub-mode-icon" .ModeLabel}}
+        </div>
+        <div class="min-w-0 flex-1">
+          <div class="flex items-center gap-1">
+            <h2 class="truncate font-mono text-base font-semibold">{{.Name}}</h2>
+            <button type="button" class="btn btn-ghost btn-xs btn-square opacity-0 transition group-hover:opacity-70 focus:opacity-100" title="Copy model name" onclick="lgCopy({{.Name}})">{{icon "copy"}}</button>
+          </div>
+          <div class="mt-1 flex flex-wrap items-center gap-1.5">
+            <span class="badge badge-sm capitalize {{if eq .ModeLabel "chat"}}badge-primary{{else if eq .ModeLabel "embedding"}}badge-info badge-soft{{else}}badge-secondary badge-soft{{end}}">{{.ModeLabel}}</span>
+            {{template "health-dot" .Status}}
+            <span class="text-[11px] opacity-50">· {{.Healthy}}/{{.Replicas}} replica{{if ne .Replicas 1}}s{{end}}</span>
+          </div>
+        </div>
+      </div>
+
+      <p class="line-clamp-2 min-h-10 text-sm opacity-70">{{if .Description}}{{.Description}}{{else}}<span class="italic opacity-60">No description provided.</span>{{end}}</p>
+
+      <div class="grid grid-cols-2 gap-2">
+        <div class="rounded-field bg-base-200/60 px-3 py-2">
+          <div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Context</div>
+          <div class="text-sm font-semibold tabular-nums">{{if .ContextWindow}}{{compact (derefI .ContextWindow)}} tok{{else}}—{{end}}</div>
+        </div>
+        <div class="rounded-field bg-base-200/60 px-3 py-2">
+          <div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Max output</div>
+          <div class="text-sm font-semibold tabular-nums">{{if .MaxOutputTokens}}{{compact (derefI .MaxOutputTokens)}} tok{{else}}—{{end}}</div>
+        </div>
+        <div class="rounded-field bg-base-200/60 px-3 py-2">
+          <div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Input / 1M</div>
+          <div class="text-sm font-semibold tabular-nums">{{if .InputCostPerM}}{{money .InputCostPerM}}{{else}}<span class="text-success">free</span>{{end}}</div>
+        </div>
+        <div class="rounded-field bg-base-200/60 px-3 py-2">
+          <div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Output / 1M</div>
+          <div class="text-sm font-semibold tabular-nums">{{if .OutputCostPerM}}{{money .OutputCostPerM}}{{else if eq .ModeLabel "embedding"}}<span class="opacity-50">n/a</span>{{else}}<span class="text-success">free</span>{{end}}</div>
+        </div>
+      </div>
+
+      {{if or .Tags .Aliases}}
+      <div class="flex flex-wrap gap-1">
+        {{range .Tags}}<span class="badge badge-ghost badge-sm gap-1">{{icon "tag" "opacity-50"}}{{.}}</span>{{end}}
+        {{range .Aliases}}<span class="badge badge-outline badge-sm gap-1 font-mono" title="Alias for this model">{{icon "link-2" "opacity-50"}}{{.}}</span>{{end}}
+      </div>
+      {{end}}
+
+      <div class="mt-auto flex items-center justify-between gap-2 border-t border-base-300/60 pt-4">
+        <span class="text-[11px] opacity-50" title="Requests in the last 7 days{{if $.Data.Scoped}} by you and your teams{{end}}">{{icon "activity"}} {{compact .Requests7}} req · 7d</span>
+        <div class="flex gap-1.5">
+          <button type="button" class="btn btn-ghost btn-sm gap-1" hx-get="/ui/hub/model?name={{.Name}}" hx-target="#modal-body">{{icon "code-xml"}} Details</button>
+          {{if or (eq .ModeLabel "chat") (eq .ModeLabel "completion")}}
+          <a href="/ui/playground?model={{.Name}}" class="btn btn-primary btn-sm gap-1">{{icon "sparkles"}} Try it</a>
+          {{else if eq .ModeLabel "embedding"}}
+          <a href="/ui/playground?model={{.Name}}&tab=embeddings" class="btn btn-primary btn-sm gap-1">{{icon "sparkles"}} Try it</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </article>
+  {{end}}
+</div>
+<div x-show="shown === 0" x-cloak class="glass-card">
+  {{template "empty" dict "Icon" "search-x" "Title" "No models match" "Body" "Try a different search term or mode."}}
+</div>
+{{else}}
+<div class="glass-card">
+  {{if .Total}}{{template "empty" dict "Icon" "lock-keyhole" "Title" "No models available to you" "Body" "Your account, team or organization does not grant access to any models yet. Ask an administrator for access."}}
+  {{else}}{{template "empty" dict "Icon" "boxes" "Title" "No models yet" "Body" "Once an administrator connects a vLLM deployment, it appears here."}}
+  {{if $.P.CanViewAll}}<div class="-mt-8 flex justify-center pb-10"><a href="/ui/models" class="btn btn-primary btn-sm gap-2">{{icon "plus"}} Add a model</a></div>{{end}}{{end}}
+</div>
+{{end}}
+</div>
+{{end}}
+{{end}}

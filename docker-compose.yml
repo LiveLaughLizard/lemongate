@@ -1,0 +1,41 @@
+# Local stack: Postgres + LemonGate + a mock vLLM server.
+# Replace the mock with your real vLLM endpoints in lemongate.yaml.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lemongate
+      POSTGRES_PASSWORD: lemongate
+      POSTGRES_DB: lemongate
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lemongate"]
+      interval: 5s
+      retries: 10
+    ports:
+      - "127.0.0.1:55432:5432"
+
+  mockvllm:
+    build: .
+    entrypoint: ["/usr/local/bin/mockvllm"]
+    command: ["-addr", ":8001", "-models", "mock-llama,mock-embed"]
+
+  lemongate:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://lemongate:lemongate@postgres:5432/lemongate?sslmode=disable
+      LEMONGATE_MASTER_KEY: ${LEMONGATE_MASTER_KEY:-change-me-master-key}
+      LEMONGATE_SECRET_KEY: ${LEMONGATE_SECRET_KEY:-change-me-secret-key}
+      LEMONGATE_BASE_URL: ${LEMONGATE_BASE_URL:-http://localhost:4000}
+      LEMONGATE_CONFIG: /etc/lemongate/lemongate.yaml
+    volumes:
+      - ./deploy/lemongate.compose.yaml:/etc/lemongate/lemongate.yaml:ro
+    ports:
+      - "4000:4000"
+
+volumes:
+  pgdata:

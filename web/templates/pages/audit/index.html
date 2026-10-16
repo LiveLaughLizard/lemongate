@@ -1,0 +1,23 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Audit log" "Sub" "Every change made through the console and the management API, with who made it and what changed." "Icon" "history"}}
+</div>
+
+<form id="audit-filters" class="mb-4 flex flex-col gap-3 sm:flex-row" hx-get="/ui/audit/table" hx-target="#audit-table" hx-trigger="input changed delay:300ms from:input, change from:select">
+  <label class="input w-full sm:max-w-sm">{{icon "search" "opacity-50"}}<input type="search" name="q" value="{{.Query}}" placeholder="Search summary, actor or entity id…"></label>
+  <select name="type" class="select w-full sm:w-48">
+    <option value="">All entities</option>
+    {{$t := .Type}}{{range .Types}}<option value="{{.}}" {{if eq . $t}}selected{{end}}>{{title .}}</option>{{end}}
+  </select>
+  <select name="action" class="select w-full sm:w-44">
+    <option value="">All actions</option>
+    {{range .Actions}}<option value="{{.}}">{{title .}}</option>{{end}}
+  </select>
+</form>
+
+<div id="audit-table" hx-get="/ui/audit/table" hx-trigger="load" hx-include="#audit-filters">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 6}}<div class="skeleton h-10 w-full"></div>{{end}}</div></div>
+</div>
+{{end}}
+{{end}}

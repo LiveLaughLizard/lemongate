@@ -1,0 +1,82 @@
+{{define "content"}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Response cache" "Sub" "Serve repeated identical requests from memory: zero upstream cost, millisecond latency." "Icon" "database-zap"}}
+  {{if .CanEdit}}
+  <div class="flex gap-2">
+    <button class="btn gap-2" hx-post="/ui/cache/reset-stats" hx-swap="none" hx-confirm="Reset hit and miss counters? Cached entries are kept.">{{icon "rotate-ccw"}} Reset stats</button>
+    <button class="btn btn-error btn-outline gap-2" hx-post="/ui/cache/flush" hx-swap="none" hx-confirm="Flush the response cache? Every cached response is dropped immediately.">{{icon "eraser"}} Flush cache</button>
+  </div>
+  {{end}}
+</div>
+
+<div id="cache-stats" hx-get="/ui/cache/stats" hx-trigger="load, every 5s, refresh-cache from:body">
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">{{range seq 4}}<div class="skeleton h-28 w-full"></div>{{end}}</div>
+</div>
+
+<div class="mt-6 grid grid-cols-1 items-start gap-6 lg:grid-cols-5">
+  <form class="glass-card flex flex-col gap-5 p-5 lg:col-span-2" hx-post="/ui/cache/settings" hx-swap="none">
+    <div>
+      <h2 class="font-semibold">Settings</h2>
+      <p class="text-sm opacity-60">Changes apply immediately to new requests.</p>
+    </div>
+    <label class="flex cursor-pointer items-start gap-3">
+      <input type="checkbox" name="enabled" class="toggle toggle-success mt-0.5" {{if .S.Enabled}}checked{{end}} {{if not .CanEdit}}disabled{{end}}>
+      <span><span class="font-medium">Cache enabled</span><span class="block text-xs opacity-60">Turning the cache off also flushes it.</span></span>
+    </label>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Default TTL (seconds)</legend>
+        <label class="input w-full">{{icon "timer" "opacity-50"}}<input type="number" name="ttl_seconds" min="1" max="{{.MaxTTL}}" value="{{.S.TTLSeconds}}" {{if not .CanEdit}}disabled{{end}}></label>
+        <p class="mt-1 text-xs text-base-content/60">600 = 10 min · max {{num .MaxTTL}} (24 h)</p>
+      </fieldset>
+      <fieldset class="fieldset min-w-0">
+        <legend class="fieldset-legend">Max entries</legend>
+        <label class="input w-full">{{icon "hard-drive" "opacity-50"}}<input type="number" name="max_entries" min="1" max="1000000" value="{{.S.MaxEntries}}" {{if not .CanEdit}}disabled{{end}}></label>
+        <p class="mt-1 text-xs text-base-content/60">Least recently used entries are evicted first.</p>
+      </fieldset>
+    </div>
+    <label class="flex cursor-pointer items-start gap-3">
+      <input type="checkbox" name="per_key" class="toggle toggle-primary mt-0.5" {{if .S.PerKey}}checked{{end}} {{if not .CanEdit}}disabled{{end}}>
+      <span><span class="font-medium">Isolate per API key</span><span class="block text-xs opacity-60">Each key only gets hits from its own earlier requests. Turn off to share answers across keys (more hits, but one caller can see another's cached response to an identical prompt).</span></span>
+    </label>
+    {{if .CanEdit}}
+    <button class="btn btn-primary gap-2 self-start"><span class="loading loading-spinner loading-sm htmx-indicator"></span>{{icon "check"}} Save settings</button>
+    {{end}}
+  </form>
+
+  <div class="glass-card flex flex-col gap-4 p-5 text-sm lg:col-span-3">
+    <h2 class="font-semibold">How it works</h2>
+    <ul class="flex list-disc flex-col gap-1.5 pl-5 opacity-80">
+      <li><span class="font-medium">Exact match.</span> The key is a hash of the route, model, the calling key (when isolated) and the full request body with keys sorted — any change to messages or parameters is a different entry.</li>
+      <li><span class="font-medium">Cached:</span> non-streaming chat completions, completions, embeddings, rerank and score.</li>
+      <li><span class="font-medium">Never cached:</span> streaming requests, requests with <code class="mono">n &gt; 1</code>, the stateful responses API, and errors.</li>
+      <li><span class="font-medium">Temperature is not considered.</span> A hit replays the earlier sample even at <code class="mono">temperature &gt; 0</code>; send <code class="mono">Cache-Control: no-cache</code> when you need a fresh one.</li>
+      <li>Hits still pass authentication, budget and rate-limit checks and pre-call guardrails, then are logged as <code class="mono">cache_hit</code> with a cost of $0.</li>
+      <li>The cache lives in memory of each LemonGate instance: it is empty after a restart and not shared between replicas.</li>
+    </ul>
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Per-request control</div>
+      <div class="overflow-x-auto rounded-field border border-base-300">
+        <table class="table table-sm">
+          <tbody>
+            <tr><td class="mono whitespace-nowrap">Cache-Control: no-cache</td><td>Skip the lookup and call the model; the fresh response is still stored.</td></tr>
+            <tr><td class="mono whitespace-nowrap">Cache-Control: no-store</td><td>Use a cached response if present, but do not store this one.</td></tr>
+            <tr><td class="mono whitespace-nowrap">Cache-Control: no-cache, no-store</td><td>Bypass the cache entirely.</td></tr>
+            <tr><td class="mono whitespace-nowrap">x-lemongate-cache-ttl: 3600</td><td>Store this response for N seconds instead of the default (max 24 h).</td></tr>
+            <tr><td class="mono whitespace-nowrap">x-lemongate-cache: hit | miss</td><td>Response header telling you whether the cache answered.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+    <div class="mockup-code bg-neutral text-neutral-content text-xs">
+<pre data-prefix="$"><code>curl -i {{.BaseURL}}/v1/chat/completions \</code></pre>
+<pre data-prefix=" "><code>  -H "Authorization: Bearer $LEMONGATE_KEY" \</code></pre>
+<pre data-prefix=" "><code>  -H "x-lemongate-cache-ttl: 3600" \</code></pre>
+<pre data-prefix=" "><code>  -d '{"model": "MODEL", "messages": [{"role": "user", "content": "Hello!"}]}'</code></pre>
+<pre data-prefix=">" class="text-success"><code>x-lemongate-cache: hit</code></pre>
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}

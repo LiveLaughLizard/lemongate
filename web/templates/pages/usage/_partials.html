@@ -1,0 +1,113 @@
+{{define "usage-tile"}}
+<div class="stat-tile">
+  <div class="flex items-center justify-between">
+    <span class="label">{{.Label}}</span>
+    <span class="flex size-8 items-center justify-center rounded-xl {{if eq .Tone "secondary"}}bg-secondary/20 text-secondary{{else if eq .Tone "accent"}}bg-accent/15 text-accent{{else if eq .Tone "info"}}bg-info/15 text-info{{else}}bg-primary/25 text-base-content{{end}}">{{icon .Icon}}</span>
+  </div>
+  <div class="flex items-end justify-between gap-2">
+    <span class="value">{{.Value}}</span>
+    {{if .HasDelta}}<span class="badge badge-sm gap-0.5 border-0 font-semibold tabular-nums {{if .Good}}bg-success/15 text-success{{else}}bg-error/15 text-error{{end}}" title="vs previous period">{{if ge .Delta 0.0}}{{icon "trending-up"}}{{else}}{{icon "trending-down"}}{{end}}{{printf "%.0f" .Delta}}%</span>{{end}}
+  </div>
+  <span class="text-xs opacity-60">{{.Hint}}</span>
+</div>
+{{end}}
+
+{{/* Sortable column header: dict "Col" "Label" "Sort" "Dir" "Right" bool */}}
+{{define "usage-th"}}
+{{$active := eq .Col .Sort}}
+{{$next := "desc"}}{{if and $active (eq .Dir "desc")}}{{$next = "asc"}}{{end}}{{if and (not $active) (eq .Col "label")}}{{$next = "asc"}}{{end}}
+<th class="{{if .Right}}text-right{{end}}">
+  <button type="button" class="inline-flex items-center gap-1 uppercase tracking-wider {{if $active}}text-base-content opacity-100{{end}} hover:opacity-100"
+    onclick="var f=document.getElementById('usage-filters'); f.elements.sort.value={{.Col}}; f.elements.dir.value={{$next}}; htmx.trigger(f, 'change')">
+    {{.Label}}
+    {{if $active}}{{if eq .Dir "asc"}}{{icon "arrow-up" "text-[0.9em]"}}{{else}}{{icon "arrow-down" "text-[0.9em]"}}{{end}}{{else}}{{icon "arrow-up-down" "text-[0.9em] opacity-40"}}{{end}}
+  </button>
+</th>
+{{end}}
+
+{{define "usage-results"}}
+{{with .Data}}
+{{if .Error}}<div role="alert" class="alert alert-error alert-soft mb-4 text-sm">{{icon "circle-alert"}}<span>{{.Error}}</span></div>{{end}}
+<div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{range .Tiles}}{{template "usage-tile" .}}{{end}}
+</div>
+
+<div class="glass-card mt-6 p-5">
+  <div class="mb-4 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+    <div>
+      <h2 class="font-semibold">Daily {{if eq .Params.Metric "cost"}}spend{{else}}{{.Params.Metric}}{{end}}{{if ne .Params.Group "tag"}} by {{lower .GroupName}}{{end}}</h2>
+      <p class="text-xs opacity-60">{{.Params.From.Format "Jan 2, 2006"}} → {{.Params.To.Format "Jan 2, 2006"}} · {{.Params.Days}} days (UTC){{if ne .Params.Group "tag"}} · top 6 shown, the rest grouped as Other{{end}}</p>
+    </div>
+  </div>
+  {{if .Totals.Requests}}
+  <div class="h-80"><canvas data-chart="{{json .Chart}}"></canvas></div>
+  {{else}}
+  {{template "empty" dict "Icon" "chart-column" "Title" "No usage in this range" "Body" "Try a wider date range or clear some filters."}}
+  {{end}}
+</div>
+
+<div class="mt-6">
+  <div class="mb-3 flex items-center justify-between">
+    <h2 class="font-semibold">Breakdown by {{lower .GroupName}}</h2>
+    <span class="text-xs opacity-50">{{len .Rows}} row{{if ne (len .Rows) 1}}s{{end}}{{if and (eq .Params.Group "tag") (not .Scoped)}} · requests may carry several tags{{end}}</span>
+  </div>
+  {{if .Rows}}
+  <div class="table-lg-wrap">
+    <table>
+      <thead><tr>
+        {{template "usage-th" dict "Col" "label" "Label" .GroupName "Sort" .Params.Sort "Dir" .Params.Dir}}
+        {{template "usage-th" dict "Col" "requests" "Label" "Requests" "Sort" .Params.Sort "Dir" .Params.Dir "Right" true}}
+        {{template "usage-th" dict "Col" "tokens" "Label" "Tokens" "Sort" .Params.Sort "Dir" .Params.Dir "Right" true}}
+        {{template "usage-th" dict "Col" "errors" "Label" "Errors" "Sort" .Params.Sort "Dir" .Params.Dir "Right" true}}
+        {{if ne .Params.Group "tag"}}{{template "usage-th" dict "Col" "latency" "Label" "Avg latency" "Sort" .Params.Sort "Dir" .Params.Dir "Right" true}}{{end}}
+        {{template "usage-th" dict "Col" "cost" "Label" "Spend" "Sort" .Params.Sort "Dir" .Params.Dir "Right" true}}
+        <th class="w-40">Share of {{if eq .Params.Metric "cost"}}spend{{else}}{{.Params.Metric}}{{end}}</th>
+        <th></th>
+      </tr></thead>
+      <tbody>
+      {{range .Rows}}
+        {{$href := $.Data.Href .}}{{$drill := $.Data.Drill .}}{{$logs := $.Data.Logs .}}
+        <tr>
+          <td class="max-w-xs">
+            <div class="flex items-center gap-2">
+              <span class="flex size-7 shrink-0 items-center justify-center rounded-lg bg-primary/20">
+                {{if eq $.Data.Params.Group "model"}}{{icon "boxes"}}{{else if eq $.Data.Params.Group "key"}}{{icon "key-round"}}{{else if eq $.Data.Params.Group "team"}}{{icon "users"}}{{else if eq $.Data.Params.Group "user"}}{{icon "user-round"}}{{else if eq $.Data.Params.Group "tag"}}{{icon "tag"}}{{else}}{{icon "contact"}}{{end}}
+              </span>
+              {{if $href}}<a href="{{$href}}" class="truncate font-medium hover:underline {{if eq $.Data.Params.Group "model"}}font-mono text-xs{{end}}">{{.Label}}</a>
+              {{else}}<span class="truncate font-medium {{if or (eq $.Data.Params.Group "model") (eq $.Data.Params.Group "end_user")}}font-mono text-xs{{end}}">{{.Label}}</span>{{end}}
+            </div>
+          </td>
+          <td class="text-right tabular-nums">{{num .Requests}}</td>
+          <td class="text-right tabular-nums"><span title="{{num .PromptTokens}} prompt · {{num .CompletionTokens}} completion">{{compact .Tokens}}</span></td>
+          <td class="text-right tabular-nums">{{if .Failures}}<span class="{{if gt .ErrorRate 5.0}}text-error{{else}}text-warning{{end}}">{{printf "%.1f" .ErrorRate}}%</span>{{else}}<span class="opacity-40">0%</span>{{end}}</td>
+          {{if ne $.Data.Params.Group "tag"}}<td class="text-right tabular-nums">{{num .AvgLatencyMs}} ms</td>{{end}}
+          <td class="text-right font-semibold tabular-nums">{{money .Cost}}</td>
+          <td><div class="h-1.5 w-full overflow-hidden rounded-full bg-base-200"><div class="brand-gradient h-full rounded-full" style="width: {{printf "%.1f" ($.Data.Share .)}}%"></div></div></td>
+          <td class="text-right">
+            <div class="flex justify-end gap-1">
+              {{if $drill}}<a href="{{$drill}}" class="btn btn-ghost btn-xs btn-square" title="Drill down">{{icon "zoom-in"}}</a>{{end}}
+              {{if $logs}}<a href="{{$logs}}" class="btn btn-ghost btn-xs btn-square" title="Request logs">{{icon "scroll-text"}}</a>{{end}}
+            </div>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+      <tfoot>
+        <tr class="font-semibold">
+          <td>Total</td>
+          <td class="text-right tabular-nums">{{num .Totals.Requests}}</td>
+          <td class="text-right tabular-nums">{{compact .Totals.Tokens}}</td>
+          <td class="text-right tabular-nums">{{printf "%.1f" .Totals.ErrorRate}}%</td>
+          {{if ne .Params.Group "tag"}}<td class="text-right tabular-nums">{{num .Totals.AvgLatencyMs}} ms</td>{{end}}
+          <td class="text-right tabular-nums">{{money .Totals.Cost}}</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {{else}}
+  <div class="glass-card">{{template "empty" dict "Icon" "search-x" "Title" (printf "No %s data" (lower .GroupName)) "Body" "Nothing matched these filters in the selected range."}}</div>
+  {{end}}
+</div>
+{{end}}
+{{end}}

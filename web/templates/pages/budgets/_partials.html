@@ -1,0 +1,155 @@
+{{define "budget-health"}}
+{{with .Data}}
+{{if not .Rows}}
+<div class="glass-card">
+  {{if eq .Threshold 0}}{{template "empty" dict "Icon" "wallet" "Title" "No budgets set" "Body" "Give keys, users, teams, organizations, tags or end users a max budget to track them here."}}
+  {{else}}{{template "empty" dict "Icon" "shield-check" "Title" "Everything is within budget" "Body" (printf "Nothing has used %d%% or more of its budget." .Threshold)}}{{end}}
+</div>
+{{else}}
+<div class="table-lg-wrap">
+  <table>
+    <thead><tr><th>Entity</th><th>Type</th><th class="w-1/3">Used</th><th>Resets</th><th class="text-right"></th></tr></thead>
+    <tbody>
+    {{range .Rows}}
+      {{$k := index $.Data.Labels .Kind}}
+      {{$pc := .Pct}}
+      <tr>
+        <td>
+          <a href="{{.Href}}" class="group flex items-center gap-3">
+            <div class="flex size-9 items-center justify-center rounded-xl {{if ge $pc 100.0}}bg-error/15 text-error{{else if ge $pc 90.0}}bg-warning/20 text-warning{{else}}bg-primary/25{{end}}">{{icon $k.Icon}}</div>
+            <div class="min-w-0">
+              <div class="max-w-xs truncate font-semibold group-hover:underline">{{.Name}}</div>
+              {{if .Blocked}}<span class="badge badge-error badge-xs">blocked</span>{{end}}
+            </div>
+          </a>
+        </td>
+        <td><span class="badge badge-ghost badge-sm">{{$k.Label}}</span></td>
+        <td>
+          <div class="flex items-baseline justify-between gap-2 text-xs">
+            <span class="font-semibold tabular-nums">{{money .Spend}} <span class="font-normal opacity-50">of {{money .MaxBudget}}{{if .BudgetPeriod}} / {{.BudgetPeriod}}{{end}}</span></span>
+            <span class="font-semibold tabular-nums {{if ge $pc 100.0}}text-error{{else if ge $pc 90.0}}text-warning{{end}}">{{printf "%.0f" $pc}}%</span>
+          </div>
+          {{$cl := pct .Spend .MaxBudget}}
+          <progress class="progress {{pctClass $cl}} mt-1 h-2 w-full" value="{{$cl}}" max="100"></progress>
+        </td>
+        <td class="text-xs">{{if .ResetAt}}<span title="{{dt .ResetAt}}">{{ago .ResetAt}}</span>{{else}}<span class="opacity-50">never</span>{{end}}</td>
+        <td class="text-right"><a href="{{.Href}}" class="btn btn-ghost btn-sm btn-square" aria-label="Open">{{icon "arrow-right"}}</a></td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+</div>
+<p class="mt-3 text-xs opacity-50">{{len .Rows}} entit{{if eq (len .Rows) 1}}y{{else}}ies{{end}}</p>
+{{end}}
+{{end}}
+{{end}}
+
+{{define "preset-list"}}
+{{$p := .P}}
+{{if not .Data}}
+<div class="glass-card">{{template "empty" dict "Icon" "layers" "Title" "No presets yet" "Body" "Create presets like \"Starter — $10/month, 60 rpm\" and apply them in one click."}}</div>
+{{else}}
+<div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+  {{range .Data}}
+  <div class="glass-card card-hover flex flex-col p-5">
+    <div class="flex items-start justify-between gap-3">
+      <div class="flex items-center gap-3">
+        <div class="brand-gradient flex size-10 items-center justify-center rounded-xl text-primary-content">{{icon "layers"}}</div>
+        <div>
+          <h3 class="font-semibold">{{.Name}}</h3>
+          <p class="text-xs opacity-50">created {{ago .CreatedAt}}</p>
+        </div>
+      </div>
+      {{if $p.IsAdmin}}
+      <div class="dropdown dropdown-end">
+        <div tabindex="0" role="button" class="btn btn-ghost btn-sm btn-square" aria-label="Actions">{{icon "ellipsis-vertical"}}</div>
+        <ul tabindex="0" class="menu dropdown-content z-20 w-44 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
+          <li><button hx-get="/ui/budgets/presets/{{.ID}}/edit" hx-target="#modal-body">{{icon "pencil"}} Edit</button></li>
+          <li><button class="text-error" hx-post="/ui/budgets/presets/{{.ID}}/delete" hx-confirm="Delete preset {{.Name}}? Entities it was applied to keep their values.">{{icon "trash-2"}} Delete</button></li>
+        </ul>
+      </div>
+      {{end}}
+    </div>
+    <div class="mt-4 flex items-baseline gap-1">
+      <span class="text-2xl font-semibold tabular-nums">{{if .MaxBudget}}{{money .MaxBudget}}{{else}}∞{{end}}</span>
+      <span class="text-sm opacity-60">{{if .MaxBudget}}{{if .BudgetPeriod}}/ {{.BudgetPeriod}}{{else}}lifetime{{end}}{{else}}no spend cap{{end}}</span>
+    </div>
+    <div class="mt-3 flex flex-wrap gap-1.5">
+      <span class="badge badge-sm badge-outline">{{if .RPMLimit}}{{num (derefI .RPMLimit)}} rpm{{else}}∞ rpm{{end}}</span>
+      <span class="badge badge-sm badge-outline">{{if .TPMLimit}}{{compact (derefI .TPMLimit)}} tpm{{else}}∞ tpm{{end}}</span>
+      <span class="badge badge-sm badge-outline">{{if .MaxParallel}}{{derefI .MaxParallel}} parallel{{else}}∞ parallel{{end}}</span>
+    </div>
+    {{if $p.IsAdmin}}
+    <div class="mt-auto pt-4">
+      <button class="btn btn-sm btn-block gap-2" hx-get="/ui/budgets/presets/{{.ID}}/apply" hx-target="#modal-body">{{icon "wand-sparkles"}} Apply to…</button>
+    </div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+{{end}}
+{{end}}
+
+{{define "preset-form"}}
+{{with .Data}}
+<form {{if .IsNew}}hx-post="/ui/budgets/presets"{{else}}hx-post="/ui/budgets/presets/{{.Preset.ID}}"{{end}} hx-target="#modal-body" data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" (or (and .IsNew "New budget preset") "Edit budget preset") "Sub" "Presets are templates: applying one copies its values; later edits don't propagate." "Icon" "layers"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "form-error" .Error}}
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Name</legend>
+      <input name="name" value="{{.Preset.Name}}" class="input w-full" placeholder="e.g. Starter — $10/month" required maxlength="80">
+    </fieldset>
+    {{template "limit-fields" dict "MaxBudget" .Preset.MaxBudget "BudgetPeriod" .Preset.BudgetPeriod "RPM" .Preset.RPMLimit "TPM" .Preset.TPMLimit "Parallel" .Preset.MaxParallel}}
+  </div>
+  {{template "modal-actions" dict "Label" (or (and .IsNew "Create preset") "Save changes")}}
+</form>
+{{end}}
+{{end}}
+
+{{define "preset-apply"}}
+{{with .Data}}
+<form hx-post="/ui/budgets/presets/{{.Preset.ID}}/apply" hx-target="#modal-body" data-modal-size="max-w-lg">
+  {{template "modal-head" dict "Title" (printf "Apply “%s”" .Preset.Name) "Sub" "Overwrites the target's budget, reset period and rate limits." "Icon" "wand-sparkles"}}
+  <div class="flex flex-col gap-4 px-6 py-5">
+    {{template "form-error" .Error}}
+    <div class="flex flex-wrap gap-1.5 rounded-box border border-base-300 bg-base-200/50 p-3 text-xs">
+      <span class="badge badge-sm badge-primary">{{if .Preset.MaxBudget}}{{money .Preset.MaxBudget}}{{if .Preset.BudgetPeriod}} / {{.Preset.BudgetPeriod}}{{end}}{{else}}no budget cap{{end}}</span>
+      <span class="badge badge-sm badge-outline">{{if .Preset.RPMLimit}}{{num (derefI .Preset.RPMLimit)}}{{else}}∞{{end}} rpm</span>
+      <span class="badge badge-sm badge-outline">{{if .Preset.TPMLimit}}{{compact (derefI .Preset.TPMLimit)}}{{else}}∞{{end}} tpm</span>
+      <span class="badge badge-sm badge-outline">{{if .Preset.MaxParallel}}{{derefI .Preset.MaxParallel}}{{else}}∞{{end}} parallel</span>
+    </div>
+    <fieldset class="fieldset">
+      <legend class="fieldset-legend">Apply to</legend>
+      <div class="join w-full">
+        {{$k := .Kind}}
+        {{range list (list "key" "Key") (list "user" "User") (list "team" "Team") (list "org" "Org")}}
+        <input class="join-item btn btn-sm flex-1" type="radio" name="kind" value="{{index . 0}}" aria-label="{{index . 1}}" {{if eq (index . 0) $k}}checked{{end}}
+          hx-get="/ui/budgets/targets?kind={{index . 0}}" hx-target="#preset-targets" hx-swap="innerHTML">
+        {{end}}
+      </div>
+    </fieldset>
+    <div id="preset-targets">{{template "preset-targets" $}}</div>
+    <p class="text-xs opacity-60">{{icon "info" "opacity-60"}} Organizations have no parallel-request limit; that value is skipped for them.</p>
+  </div>
+  {{template "modal-actions" dict "Label" "Apply preset"}}
+</form>
+{{end}}
+{{end}}
+
+{{define "preset-targets"}}
+{{with .Data}}
+<fieldset class="fieldset">
+  <legend class="fieldset-legend">{{if eq .Kind "key"}}API key{{else if eq .Kind "user"}}User{{else if eq .Kind "team"}}Team{{else}}Organization{{end}}</legend>
+  {{if .Targets}}
+  <select name="target" class="select w-full" required>
+    <option value="">Choose…</option>
+    {{$t := .Target}}
+    {{range .Targets}}<option value="{{.ID}}" {{if eq .ID $t}}selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+  {{else}}
+  <p class="rounded-box border border-dashed border-base-300 p-3 text-sm opacity-60">Nothing to apply to yet.</p>
+  {{end}}
+</fieldset>
+{{end}}
+{{end}}

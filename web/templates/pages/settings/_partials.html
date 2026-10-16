@@ -1,0 +1,447 @@
+{{/* Badge for a field pinned by the YAML config file: bool */}}
+{{define "ov"}}{{if .}}<span class="badge badge-warning badge-soft badge-xs ml-1 gap-1 align-middle font-normal normal-case" title="This value is set in the config file and wins after a restart">{{icon "file-cog"}} config file</span>{{end}}{{end}}
+
+{{/* Toggle row: dict "Name" "Label" "Help" "On" bool "Ov" bool */}}
+{{define "set-toggle"}}
+<label class="flex cursor-pointer items-start justify-between gap-4 rounded-box border border-base-300 bg-base-100/60 p-4 transition hover:border-primary/40">
+  <div>
+    <div class="text-sm font-medium">{{.Label}}{{template "ov" .Ov}}</div>
+    {{if .Help}}<div class="mt-0.5 text-xs opacity-60">{{.Help}}</div>{{end}}
+  </div>
+  <input type="checkbox" name="{{.Name}}" class="toggle toggle-primary mt-0.5" {{if .On}}checked{{end}}>
+</label>
+{{end}}
+
+{{/* Section shell: dict "ID" "Title" "Sub" "Icon" */}}
+{{define "set-head"}}
+<div class="flex items-start gap-4 border-b border-base-300/70 px-6 py-5">
+  <div class="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/25">{{icon .Icon "text-xl"}}</div>
+  <div><h2 class="text-lg font-semibold">{{.Title}}</h2><p class="text-sm opacity-60">{{.Sub}}</p></div>
+</div>
+{{end}}
+
+{{define "set-foot"}}
+{{if .CanEdit}}
+<div class="flex items-center justify-end gap-3 border-t border-base-300/70 px-6 py-4">
+  <span class="text-xs opacity-50">Saved settings apply to new requests immediately.</span>
+  <button type="submit" class="btn btn-primary gap-2"><span class="loading loading-spinner loading-sm htmx-indicator"></span>{{icon "save"}} Save</button>
+</div>
+{{end}}
+{{end}}
+
+{{define "settings-general"}}
+{{with .Data}}{{$o := index .Overrides "general"}}
+<form id="settings-general" hx-post="/ui/settings/general" hx-target="this" hx-swap="outerHTML" class="glass-card">
+  {{template "set-head" dict "Title" "General" "Sub" "Defaults applied to new API keys and request handling limits." "Icon" "sliders-horizontal"}}
+  <fieldset class="flex flex-col gap-5 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+    {{if eq .Section "general"}}{{template "form-error" .Error}}{{end}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Default key budget (USD){{template "ov" (index $o "default_key_budget")}}</legend>
+        <label class="input w-full">{{icon "dollar-sign" "opacity-50"}}<input type="number" step="0.01" min="0" name="default_key_budget" value="{{val .S.General.DefaultKeyBudget}}" placeholder="Unlimited"></label>
+        <p class="text-xs opacity-60">Pre-filled when creating a key. Leave empty for no budget.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Default key lifetime{{template "ov" (index $o "default_key_duration")}}</legend>
+        <input name="default_key_duration" value="{{.S.General.DefaultKeyDuration}}" class="input w-full font-mono" placeholder="never" list="dur-opts">
+        <datalist id="dur-opts"><option value="7d"><option value="30d"><option value="90d"><option value="365d"></datalist>
+        <p class="text-xs opacity-60">e.g. <code>30d</code>, <code>12h</code>. Empty means keys never expire.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Max request size (MB){{template "ov" (index $o "max_request_bytes")}}</legend>
+        <input type="number" min="1" max="1024" name="max_request_mb" value="{{printf "%.0f" (divf .S.General.MaxRequestBytes 1048576)}}" class="input w-full">
+        <p class="text-xs opacity-60">Larger request bodies are rejected with 413.</p>
+      </fieldset>
+    </div>
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {{template "set-toggle" dict "Name" "allow_member_keys" "Label" "Members can create keys" "Help" "Let non-admin users create personal API keys. Team admins can always create keys for their teams." "On" .S.General.AllowMemberKeys "Ov" (index $o "allow_member_keys")}}
+      {{template "set-toggle" dict "Name" "track_end_users" "Label" "Track end users" "Help" "Record the request's user field as an end user with spend and optional budget." "On" .S.General.TrackEndUsers "Ov" (index $o "track_end_users")}}
+    </div>
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "settings-routing"}}
+{{with .Data}}{{$o := index .Overrides "routing"}}
+<form id="settings-routing" hx-post="/ui/settings/routing" hx-target="this" hx-swap="outerHTML" class="glass-card" x-data="{s: {{json (.S.Routing.Strategy)}}}">
+  {{template "set-head" dict "Title" "Routing" "Sub" "How requests are spread across the deployments of a model group, retried and failed over." "Icon" "waypoints"}}
+  <fieldset class="flex flex-col gap-6 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+    {{if eq .Section "routing"}}{{template "form-error" .Error}}{{end}}
+    <div>
+      <div class="mb-2 text-sm font-semibold">Load-balancing strategy{{template "ov" (index $o "strategy")}}</div>
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {{range .Strategies}}
+        <label class="flex cursor-pointer gap-3 rounded-box border p-4 transition" :class="s==={{json (.Value)}} ? 'border-primary bg-primary/10 ring-1 ring-primary/40' : 'border-base-300 hover:border-primary/40'">
+          <input type="radio" name="strategy" value="{{.Value}}" class="radio radio-primary radio-sm mt-0.5" x-model="s">
+          <div>
+            <div class="flex items-center gap-2 text-sm font-semibold">{{icon .Icon "opacity-70"}} {{.Label}}</div>
+            <p class="mt-1 text-xs opacity-70">{{.Help}}</p>
+          </div>
+        </label>
+        {{end}}
+      </div>
+    </div>
+    <div>
+      <div class="mb-2 text-sm font-semibold">Retries &amp; timeouts</div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Retries{{template "ov" (index $o "num_retries")}}</legend>
+          <input type="number" min="0" max="10" name="num_retries" value="{{.S.Routing.NumRetries}}" class="input w-full">
+          <p class="text-xs opacity-60">On 429, 5xx and timeouts.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Retry backoff (ms){{template "ov" (index $o "retry_backoff_ms")}}</legend>
+          <input type="number" min="0" name="retry_backoff_ms" value="{{.S.Routing.RetryBackoffMs}}" class="input w-full">
+          <p class="text-xs opacity-60">Doubles on each attempt.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Default timeout (s){{template "ov" (index $o "default_timeout_sec")}}</legend>
+          <input type="number" min="1" name="default_timeout_sec" value="{{.S.Routing.DefaultTimeoutSec}}" class="input w-full">
+          <p class="text-xs opacity-60">Per-deployment timeouts override.</p>
+        </fieldset>
+      </div>
+    </div>
+    <div>
+      <div class="mb-2 text-sm font-semibold">Cooldown &amp; health</div>
+      <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Failures before cooldown{{template "ov" (index $o "cooldown_failures")}}</legend>
+          <input type="number" min="0" name="cooldown_failures" value="{{.S.Routing.CooldownFailures}}" class="input w-full">
+          <p class="text-xs opacity-60">Within one minute. 0 disables cooldowns.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Cooldown duration (s){{template "ov" (index $o "cooldown_seconds")}}</legend>
+          <input type="number" min="0" name="cooldown_seconds" value="{{.S.Routing.CooldownSeconds}}" class="input w-full">
+          <p class="text-xs opacity-60">A cooling deployment only receives traffic if nothing else is available.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Health check interval (s){{template "ov" (index $o "health_check_sec")}}</legend>
+          <input type="number" min="0" name="health_check_sec" value="{{.S.Routing.HealthCheckSec}}" class="input w-full">
+          <p class="text-xs opacity-60">Background probe of <code>/v1/models</code>. 0 disables probes.</p>
+        </fieldset>
+        <fieldset class="fieldset">
+          <legend class="fieldset-legend">Latency smoothing (α){{template "ov" (index $o "latency_ewma_alpha")}}</legend>
+          <input type="number" step="0.05" min="0.05" max="1" name="latency_ewma_alpha" value="{{.S.Routing.LatencyEWMAAlpha}}" class="input w-full">
+          <p class="text-xs opacity-60">Weight of the newest sample in the moving average. Higher reacts faster.</p>
+        </fieldset>
+      </div>
+    </div>
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "settings-logging"}}
+{{with .Data}}{{$o := index .Overrides "logging"}}
+<form id="settings-logging" hx-post="/ui/settings/logging" hx-target="this" hx-swap="outerHTML" class="glass-card">
+  {{template "set-head" dict "Title" "Logging" "Sub" "What is kept for every request and for how long." "Icon" "scroll-text"}}
+  <fieldset class="flex flex-col gap-5 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+    {{if eq .Section "logging"}}{{template "form-error" .Error}}{{end}}
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {{template "set-toggle" dict "Name" "store_payloads" "Label" "Store request & response bodies" "Help" "Keeps prompts and completions in the request log for debugging. Increases database size." "On" .S.Logging.StorePayloads "Ov" (index $o "store_payloads")}}
+      {{template "set-toggle" dict "Name" "redact_payloads" "Label" "Redact personal data" "Help" "Mask emails, phone numbers, card numbers and secrets before payloads are stored." "On" .S.Logging.RedactPayloads "Ov" (index $o "redact_payloads")}}
+    </div>
+    {{if and .S.Logging.StorePayloads (not .S.Logging.RedactPayloads)}}
+    <div role="alert" class="alert alert-warning alert-soft text-sm">{{icon "triangle-alert"}}<span>Payloads are stored without redaction. Anyone who can read request logs can read prompt contents.</span></div>
+    {{end}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Retention (days){{template "ov" (index $o "retention_days")}}</legend>
+        <input type="number" min="0" name="retention_days" value="{{.S.Logging.RetentionDays}}" class="input w-full">
+        <p class="text-xs opacity-60">Request logs older than this are purged hourly. 0 keeps them forever. Daily usage rollups are kept.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Max stored payload (KB){{template "ov" (index $o "max_payload_bytes")}}</legend>
+        <input type="number" min="1" name="max_payload_kb" value="{{printf "%.0f" (divf .S.Logging.MaxPayloadBytes 1024)}}" class="input w-full">
+        <p class="text-xs opacity-60">Larger bodies are truncated before storage.</p>
+      </fieldset>
+    </div>
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "settings-cache"}}
+{{with .Data}}{{$o := index .Overrides "cache"}}
+<form id="settings-cache" hx-post="/ui/settings/cache" hx-target="this" hx-swap="outerHTML" class="glass-card">
+  {{template "set-head" dict "Title" "Response cache" "Sub" "Exact-match caching of identical requests, kept in memory." "Icon" "database-zap"}}
+  <fieldset class="flex flex-col gap-5 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+    {{if eq .Section "cache"}}{{template "form-error" .Error}}{{end}}
+    <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+      {{template "set-toggle" dict "Name" "enabled" "Label" "Enable cache" "Help" "Clients can still opt out per request with Cache-Control: no-cache." "On" .S.Cache.Enabled "Ov" (index $o "enabled")}}
+      {{template "set-toggle" dict "Name" "per_key" "Label" "Isolate per API key" "Help" "Only reuse responses for the key that produced them. Recommended." "On" .S.Cache.PerKey "Ov" (index $o "per_key")}}
+    </div>
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Time to live (seconds){{template "ov" (index $o "ttl_seconds")}}</legend>
+        <input type="number" min="1" name="ttl_seconds" value="{{.S.Cache.TTLSeconds}}" class="input w-full">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Max entries{{template "ov" (index $o "max_entries")}}</legend>
+        <input type="number" min="1" name="max_entries" value="{{.S.Cache.MaxEntries}}" class="input w-full">
+        <p class="text-xs opacity-60">Least recently used entries are evicted first.</p>
+      </fieldset>
+    </div>
+    <a href="/ui/cache" class="btn btn-ghost btn-sm self-start gap-2">{{icon "chart-column"}} Cache statistics &amp; flush {{icon "arrow-right"}}</a>
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "settings-alerting"}}
+{{with .Data}}{{$o := index .Overrides "alerting"}}
+<form id="settings-alerting" hx-post="/ui/settings/alerting" hx-target="this" hx-swap="outerHTML" class="glass-card">
+  {{template "set-head" dict "Title" "Alerting thresholds" "Sub" "When alerts fire. Configure where they go on the Alerts page." "Icon" "bell-ring"}}
+  <fieldset class="flex flex-col gap-5 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+    {{if eq .Section "alerting"}}{{template "form-error" .Error}}{{end}}
+    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Budget thresholds (%){{template "ov" (index $o "budget_thresholds")}}</legend>
+        <input name="budget_thresholds" value="{{.Thresholds}}" class="input w-full font-mono" placeholder="50, 80, 100">
+        <p class="text-xs opacity-60">Alert when a key, user, team or org crosses these percentages of its budget.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Error rate (%){{template "ov" (index $o "error_rate_percent")}}</legend>
+        <input type="number" min="0" max="100" name="error_rate_percent" value="{{.S.Alerting.ErrorRatePercent}}" class="input w-full">
+        <p class="text-xs opacity-60">Per model over a 5-minute window. 0 disables.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Slow response (s){{template "ov" (index $o "slow_response_sec")}}</legend>
+        <input type="number" min="0" name="slow_response_sec" value="{{.S.Alerting.SlowResponseSec}}" class="input w-full">
+        <p class="text-xs opacity-60">0 disables.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Dedupe window (minutes){{template "ov" (index $o "dedupe_minutes")}}</legend>
+        <input type="number" min="0" name="dedupe_minutes" value="{{.S.Alerting.DedupeMinutes}}" class="input w-full">
+        <p class="text-xs opacity-60">Identical alerts within this window are sent once.</p>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Key expiry warning (days){{template "ov" (index $o "key_expiry_days")}}</legend>
+        <input type="number" min="0" name="key_expiry_days" value="{{.S.Alerting.KeyExpiryDays}}" class="input w-full">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Daily report hour (UTC){{template "ov" (index $o "daily_report_hour_utc")}}</legend>
+        <select name="daily_report_hour_utc" class="select w-full">
+          {{$h := .S.Alerting.DailyReportHourUTC}}
+          {{range seq 24}}<option value="{{.}}" {{if eq . $h}}selected{{end}}>{{printf "%02d:00" .}}</option>{{end}}
+        </select>
+      </fieldset>
+    </div>
+    {{template "set-toggle" dict "Name" "daily_report" "Label" "Daily spend digest" "Help" "Send a summary of yesterday's spend, requests and top models once a day." "On" .S.Alerting.DailyReport "Ov" (index $o "daily_report")}}
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "settings-branding"}}
+{{with .Data}}{{$o := index .Overrides "branding"}}
+<form id="settings-branding" hx-post="/ui/settings/branding" hx-target="this" hx-swap="outerHTML" class="glass-card" x-data="{name: {{json .S.Branding.AppName}}, tag: {{json .S.Branding.Tagline}}, logo: {{json .S.Branding.LogoURL}}}">
+  {{template "set-head" dict "Title" "Branding" "Sub" "Name and logo shown in the console and on the sign-in page." "Icon" "palette"}}
+  <fieldset class="grid grid-cols-1 gap-6 px-6 py-5 md:grid-cols-[1fr_16rem]" {{if not .CanEdit}}disabled{{end}}>
+    <div class="flex flex-col gap-4">
+      {{if eq .Section "branding"}}{{template "form-error" .Error}}{{end}}
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">App name{{template "ov" (index $o "app_name")}}</legend>
+        <input name="app_name" x-model="name" class="input w-full" maxlength="40" required>
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Tagline{{template "ov" (index $o "tagline")}}</legend>
+        <input name="tagline" x-model="tag" class="input w-full" maxlength="80">
+      </fieldset>
+      <fieldset class="fieldset">
+        <legend class="fieldset-legend">Logo URL{{template "ov" (index $o "logo_url")}}</legend>
+        <label class="input w-full">{{icon "image" "opacity-50"}}<input name="logo_url" x-model="logo" placeholder="https://… or /static/…"></label>
+        <p class="text-xs opacity-60">Square SVG or PNG works best. Leave empty for the default lemon.</p>
+      </fieldset>
+    </div>
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Preview</div>
+      <div class="rounded-box border border-base-300 bg-base-100 p-4">
+        <div class="flex items-center gap-3">
+          <img :src="logo || '/static/img/logo.svg'" alt="" class="size-9 drop-shadow-sm" onerror="this.src='/static/img/logo.svg'">
+          <div class="min-w-0 leading-tight">
+            <div class="brand-text truncate text-xl font-extrabold tracking-tight" x-text="name || 'LemonGate'"></div>
+            <div class="truncate text-[11px] opacity-50" x-text="tag"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </fieldset>
+  {{template "set-foot" .}}
+</form>
+{{end}}
+{{end}}
+
+{{define "env-row"}}
+<div class="flex items-center justify-between gap-4 px-5 py-3">
+  <div class="flex items-center gap-3 text-sm">{{icon .Icon "opacity-50"}}<span>{{.Label}}</span></div>
+  <div class="min-w-0 truncate text-right text-sm font-medium">{{.Value}}</div>
+</div>
+{{end}}
+
+{{define "env-bool"}}
+<div class="flex items-center justify-between gap-4 px-5 py-3">
+  <div class="flex items-center gap-3 text-sm">{{icon .Icon "opacity-50"}}<span>{{.Label}}</span></div>
+  <div class="flex items-center gap-2 text-right text-sm">
+    {{if .Detail}}<span class="mono hidden opacity-60 sm:inline">{{.Detail}}</span>{{end}}
+    {{if .On}}<span class="badge badge-success badge-soft gap-1">{{icon "check"}} {{or .Yes "Enabled"}}</span>{{else}}<span class="badge badge-ghost">{{or .No "Not configured"}}</span>{{end}}
+  </div>
+</div>
+{{end}}
+
+{{define "settings-env"}}
+{{with .Data}}
+<div class="flex flex-col gap-6">
+  <div class="grid grid-cols-2 gap-4 lg:grid-cols-4">
+    {{template "stat" dict "Label" "Version" "Value" .Env.Version "Icon" "tag" "Hint" .Env.GoVersion}}
+    {{template "stat" dict "Label" "Database" "Value" (or (and .Env.DBConnected "Connected") "Down") "Icon" "database" "Tone" (or (and .Env.DBConnected "success") "error") "Hint" (printf "ping %d ms" .Env.DBLatencyMs)}}
+    {{template "stat" dict "Label" "Model groups" "Value" (num .Env.ModelGroups) "Icon" "server" "Tone" "secondary" "Hint" (printf "%d deployments" .Env.Deployments)}}
+    {{template "stat" dict "Label" "Config models" "Value" (num .Env.FileModels) "Icon" "file-cog" "Tone" "accent" "Hint" "read-only, from YAML"}}
+  </div>
+  <div class="glass-card">
+    {{template "set-head" dict "Title" "Environment" "Sub" "Set through environment variables and the config file. Restart to change." "Icon" "server-cog"}}
+    <div class="divide-y divide-base-300/70">
+      {{template "env-row" dict "Icon" "globe" "Label" "Base URL" "Value" (or .Env.BaseURL "—")}}
+      {{template "env-row" dict "Icon" "network" "Label" "Listen address" "Value" (or .Env.Listen "—")}}
+      {{template "env-row" dict "Icon" "file-cog" "Label" "Config file" "Value" (or .Env.ConfigPath "none")}}
+      {{template "env-row" dict "Icon" "clock" "Label" "Session lifetime" "Value" (printf "%d hours" .Env.SessionHours)}}
+      {{template "env-bool" dict "Icon" "database" "Label" "Database" "On" .Env.DBConnected "Yes" "Connected" "No" "Unreachable"}}
+      {{template "env-bool" dict "Icon" "fingerprint" "Label" "Single sign-on (OIDC)" "On" .Env.SSO "Detail" .Env.SSOIssuer}}
+      {{template "env-bool" dict "Icon" "mail" "Label" "SMTP email" "On" .Env.SMTP "Detail" .Env.SMTPHost}}
+      {{template "env-bool" dict "Icon" "lock-keyhole" "Label" "Dedicated encryption key" "On" .Env.SecretKeySet "Yes" "Set" "No" "Derived from master key"}}
+      {{template "env-bool" dict "Icon" "code" "Label" "Development mode" "On" .Env.DevMode "Yes" "On" "No" "Off"}}
+    </div>
+  </div>
+  <p class="text-xs opacity-50">Secrets (master key, database password, client secrets) are never shown here.</p>
+</div>
+{{end}}
+{{end}}
+
+{{define "settings-metrics"}}
+{{with .Data}}{{$o := index .Overrides "metrics"}}{{$m := .Metrics}}
+<div id="settings-metrics" class="flex flex-col gap-6" {{if .OOB}}hx-swap-oob="outerHTML"{{end}}>
+  <form hx-post="/ui/settings/metrics" hx-target="#settings-metrics" hx-swap="outerHTML" class="glass-card">
+    {{template "set-head" dict "Title" "Prometheus metrics" "Sub" "Traffic, latency, deployments, cache, guardrails and spend in the Prometheus text format." "Icon" "activity"}}
+    <fieldset class="flex flex-col gap-5 px-6 py-5" {{if not .CanEdit}}disabled{{end}}>
+      {{if eq .Section "metrics"}}{{template "form-error" .Error}}{{end}}
+      <div class="flex flex-wrap items-center gap-3 rounded-box border border-base-300 bg-base-100/60 px-4 py-3">
+        {{icon "link" "opacity-50"}}
+        <code class="mono min-w-0 flex-1 truncate text-sm">{{$m.URL}}</code>
+        {{if not .S.Metrics.Enabled}}<span class="badge badge-ghost">Off</span>
+        {{else if $m.AuthRequired}}<span class="badge badge-success badge-soft gap-1">{{icon "shield-check"}} Token required</span>
+        {{else}}<span class="badge badge-warning badge-soft gap-1">{{icon "lock-open"}} Open</span>{{end}}
+      </div>
+      <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+        {{template "set-toggle" dict "Name" "enabled" "Label" "Serve /metrics" "Help" "Turn off to return 404 to every scrape." "On" .S.Metrics.Enabled "Ov" (index $o "enabled")}}
+        {{template "set-toggle" dict "Name" "require_auth" "Label" "Require a scrape token" "Help" "Scrapes must send the scrape token (or the master key) as a bearer token or basic-auth password." "On" .S.Metrics.RequireAuth "Ov" (index $o "require_auth")}}
+        {{template "set-toggle" dict "Name" "entity_metrics" "Label" "Spend & budget per key, team, user and org" "Help" "Adds gauges labelled with key aliases, team names and user emails (top 2,000 of each by spend). Raises cardinality; only enable for a protected endpoint." "On" .S.Metrics.EntityMetrics "Ov" (index $o "entity_metrics")}}
+      </div>
+      {{if $m.EnvToken}}<div role="alert" class="alert alert-info alert-soft text-sm">{{icon "info"}}<span><code>LEMONGATE_METRICS_TOKEN</code> is set, so scrapes always need a token, whatever the toggle says.</span></div>{{end}}
+      {{if and .S.Metrics.EntityMetrics (not $m.AuthRequired)}}<div role="alert" class="alert alert-warning alert-soft text-sm">{{icon "triangle-alert"}}<span>Per-entity metrics expose key aliases, team names and user emails to anyone who can reach <code>/metrics</code>. Require a scrape token.</span></div>{{end}}
+    </fieldset>
+    {{template "set-foot" .}}
+  </form>
+
+  <div class="glass-card">
+    {{template "set-head" dict "Title" "Scrape token" "Sub" "A dedicated credential for Prometheus, so the master key never sits in its config." "Icon" "key-round"}}
+    <div class="flex flex-col gap-4 px-6 py-5 sm:flex-row sm:items-center sm:justify-between">
+      <div class="text-sm">
+        {{if $m.TokenSet}}<span class="badge badge-success badge-soft gap-1">{{icon "check"}} Active</span>
+          <span class="ml-2 opacity-70">generated {{if not $m.TokenCreated.IsZero}}{{ago $m.TokenCreated}}{{end}} — only its hash is stored.</span>
+        {{else}}<span class="badge badge-ghost">None</span><span class="ml-2 opacity-70">Generate one, then turn on “Require a scrape token”.</span>{{end}}
+      </div>
+      {{if .CanEdit}}
+      <div class="flex shrink-0 gap-2">
+        {{if $m.TokenSet}}
+        <button type="button" class="btn btn-ghost btn-sm gap-1 text-error" hx-post="/ui/settings/metrics/token/revoke" hx-target="#settings-metrics" hx-swap="outerHTML" hx-confirm="Revoke the scrape token? Prometheus will get 401 until it has a new one.">{{icon "trash-2"}} Revoke</button>
+        <button type="button" class="btn btn-sm gap-1" hx-post="/ui/settings/metrics/token" hx-target="#modal-body" hx-confirm="Rotate the scrape token? The current one stops working immediately.">{{icon "refresh-cw"}} Rotate</button>
+        {{else}}
+        <button type="button" class="btn btn-primary btn-sm gap-1" hx-post="/ui/settings/metrics/token" hx-target="#modal-body">{{icon "key-round"}} Generate token</button>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 gap-6 xl:grid-cols-2">
+    <div class="glass-card min-w-0">
+      {{template "set-head" dict "Title" "Prometheus config" "Sub" "Add this job to prometheus.yml." "Icon" "file-cog"}}
+      <div class="px-6 py-5">
+        <div class="mockup-code bg-neutral text-neutral-content text-xs">
+<pre data-prefix=" "><code>scrape_configs:</code></pre>
+<pre data-prefix=" "><code>  - job_name: lemongate</code></pre>
+<pre data-prefix=" "><code>    scheme: {{$m.Scheme}}</code></pre>
+<pre data-prefix=" "><code>    metrics_path: /metrics</code></pre>
+<pre data-prefix=" "><code>    scrape_interval: 15s</code></pre>
+{{if $m.AuthRequired}}<pre data-prefix=" "><code>    authorization:</code></pre>
+<pre data-prefix=" "><code>      credentials_file: /etc/prometheus/lemongate.token</code></pre>
+{{end}}<pre data-prefix=" "><code>    static_configs:</code></pre>
+<pre data-prefix=" "><code>      - targets: ["{{$m.Target}}"]</code></pre>
+        </div>
+        <p class="mt-3 text-xs opacity-60">Run one scrape target per replica: request counters are kept per process. Spend and budget gauges come from Postgres, so take them from a single replica (or <code>max by</code> them).</p>
+      </div>
+    </div>
+    <div class="glass-card min-w-0">
+      {{template "set-head" dict "Title" "Grafana dashboard" "Sub" "Overview, traffic, deployments, limits, cache, extensions and spend panels." "Icon" "chart-line"}}
+      <div class="flex flex-col gap-4 px-6 py-5">
+        <p class="text-sm opacity-80">In Grafana open <b>Dashboards → New → Import</b>, upload the file and choose your Prometheus data source. Filter every panel by model with the <code>model</code> variable.</p>
+        <div><a href="/ui/settings/metrics/grafana.json" download class="btn btn-primary btn-sm gap-1">{{icon "download"}} Download dashboard JSON</a></div>
+        <div class="mockup-code bg-neutral text-neutral-content text-xs">
+<pre data-prefix="$"><code>curl {{if $m.AuthRequired}}-H "Authorization: Bearer $TOKEN" {{end}}{{$m.URL}}</code></pre>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="glass-card">
+    {{template "set-head" dict "Title" "Metric reference" "Sub" "Everything exported under the lemongate_ prefix, plus standard Go and process metrics." "Icon" "book-open"}}
+    <div class="overflow-x-auto">
+      <table class="table table-sm">
+        <thead><tr><th>Metric</th><th>Type</th><th class="max-md:hidden">Labels</th><th class="max-sm:hidden">Description</th></tr></thead>
+        {{range $m.Groups}}
+        <tbody>
+          <tr class="bg-base-200/50"><td colspan="4" class="text-xs font-semibold uppercase tracking-wider opacity-60">{{.Name}}</td></tr>
+          {{range .Metrics}}
+          <tr>
+            <td class="mono text-xs [overflow-wrap:anywhere]">{{.Name}}{{if .Optional}} <span class="badge badge-xs badge-ghost">opt-in</span>{{end}}</td>
+            <td><span class="badge badge-sm {{if eq .Type "counter"}}badge-primary badge-soft{{else if eq .Type "gauge"}}badge-secondary badge-soft{{else}}badge-accent badge-soft{{end}}">{{.Type}}</span></td>
+            <td class="mono text-xs opacity-70 max-md:hidden">{{or .Labels "—"}}</td>
+            <td class="text-xs opacity-80 max-sm:hidden">{{.Help}}</td>
+          </tr>
+          {{end}}
+        </tbody>
+        {{end}}
+      </table>
+    </div>
+  </div>
+</div>
+{{end}}
+{{end}}
+
+{{define "metrics-token-created"}}
+{{with .Data}}
+<div data-modal-size="max-w-2xl">
+  {{template "modal-head" dict "Title" "Scrape token" "Sub" "Copy it now — only its hash is stored, so it cannot be shown again." "Icon" "key-round"}}
+  <div class="flex flex-col gap-5 px-6 py-5">
+    {{template "copy-field" .Metrics.Token}}
+    <div>
+      <div class="mb-2 text-xs font-semibold uppercase tracking-wider opacity-60">Save it for Prometheus</div>
+      <div class="mockup-code bg-neutral text-neutral-content text-xs">
+<pre data-prefix="$"><code>printf '%s' '{{.Metrics.Token}}' | sudo tee /etc/prometheus/lemongate.token</code></pre>
+      </div>
+    </div>
+    {{if not .S.Metrics.RequireAuth}}<div role="alert" class="alert alert-warning alert-soft text-sm">{{icon "triangle-alert"}}<span>The endpoint is still open. Turn on <b>Require a scrape token</b> once Prometheus has the token.</span></div>{{end}}
+  </div>
+  <div class="flex justify-end gap-2 border-t border-base-300 px-6 py-4">
+    <button type="button" class="btn btn-primary" onclick="document.getElementById('modal').close()">Done</button>
+  </div>
+</div>
+{{template "settings-metrics" $}}
+{{end}}
+{{end}}

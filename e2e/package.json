@@ -1,0 +1,7 @@
+{
+  "name": "lemongate-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": { "smoke": "node smoke.mjs" },
+  "dependencies": { "puppeteer-core": "^24.0.0" }
+}

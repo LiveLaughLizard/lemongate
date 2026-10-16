@@ -1,0 +1,66 @@
+{{define "content"}}
+{{$p := .P}}
+{{with .Data}}
+<div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+  {{template "page-header" dict "Title" "Budgets" "Sub" "Watch spend against limits everywhere, and reuse budget presets." "Icon" "wallet"}}
+  {{if $p.IsAdmin}}<button class="btn btn-primary gap-2 shadow-sm" hx-get="/ui/budgets/presets/new" hx-target="#modal-body">{{icon "plus"}} New preset</button>{{end}}
+</div>
+
+<div class="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+  {{template "stat" dict "Label" "Budgeted entities" "Value" (num .Budgeted) "Icon" "wallet" "Hint" "Keys, users, teams, orgs, tags, end users"}}
+  {{template "stat" dict "Label" "Nearing limit" "Value" (num .Warn) "Icon" "gauge" "Tone" "accent" "Hint" "70–99% of budget used"}}
+  {{template "stat" dict "Label" "Exhausted" "Value" (num .Over) "Icon" "octagon-alert" "Tone" "error" "Hint" "Requests are being rejected"}}
+  {{template "stat" dict "Label" "Presets" "Value" (num .Presets) "Icon" "layers" "Tone" "info" "Hint" "Reusable budget templates"}}
+</div>
+
+<div class="mb-8 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-6">
+  {{range .Buckets}}
+  <div class="glass-card p-4">
+    <div class="flex items-center gap-2 text-sm font-medium">{{icon .Icon "opacity-60"}}{{.Label}}</div>
+    <div class="mt-2 flex items-baseline gap-1"><span class="text-xl font-semibold tabular-nums">{{.Total}}</span><span class="text-xs opacity-50">with budget</span></div>
+    <div class="mt-2 flex flex-wrap gap-1">
+      {{if .Over}}<span class="badge badge-error badge-xs">{{.Over}} exhausted</span>{{end}}
+      {{if .Warn}}<span class="badge badge-warning badge-xs">{{.Warn}} near</span>{{end}}
+      {{if and (not .Over) (not .Warn) .Total}}<span class="badge badge-success badge-soft badge-xs">all healthy</span>{{end}}
+    </div>
+    {{if gt .Budgeted 0.0}}
+    {{$u := pct .Spend .Budgeted}}
+    <progress class="progress {{pctClass $u}} mt-3 h-1.5 w-full" value="{{$u}}" max="100" title="{{money .Spend}} of {{money .Budgeted}}"></progress>
+    <div class="mt-1 text-[11px] opacity-50">{{money .Spend}} of {{money .Budgeted}}</div>
+    {{end}}
+  </div>
+  {{end}}
+</div>
+
+<div class="mb-3 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+  <div>
+    <h2 class="text-lg font-semibold">Budget health</h2>
+    <p class="text-sm opacity-60">Entities closest to their budget, fullest first.</p>
+  </div>
+  <form id="health-filters" class="flex gap-2" hx-get="/ui/budgets/health" hx-target="#budget-health" hx-trigger="change">
+    <select name="kind" class="select select-sm w-40">
+      <option value="">Everything</option>
+      {{range .Buckets}}<option value="{{.Key}}">{{.Label}}</option>{{end}}
+    </select>
+    <select name="threshold" class="select select-sm w-36">
+      <option value="50">≥ 50% used</option>
+      <option value="70" selected>≥ 70% used</option>
+      <option value="90">≥ 90% used</option>
+      <option value="100">Exhausted</option>
+      <option value="0">All budgets</option>
+    </select>
+  </form>
+</div>
+<div id="budget-health" class="mb-10" hx-get="/ui/budgets/health" hx-trigger="load, refresh-budgets from:body" hx-include="#health-filters">
+  <div class="table-lg-wrap p-6"><div class="flex flex-col gap-3">{{range seq 4}}<div class="skeleton h-10 w-full"></div>{{end}}</div></div>
+</div>
+
+<div class="mb-3">
+  <h2 class="text-lg font-semibold">Presets</h2>
+  <p class="text-sm opacity-60">Standard budget and rate-limit bundles you can apply to keys, users, teams and organizations.</p>
+</div>
+<div id="preset-list" hx-get="/ui/budgets/presets" hx-trigger="load, refresh-presets from:body">
+  <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">{{range seq 3}}<div class="skeleton h-36 w-full"></div>{{end}}</div>
+</div>
+{{end}}
+{{end}}

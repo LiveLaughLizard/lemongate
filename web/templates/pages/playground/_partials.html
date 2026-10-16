@@ -1,0 +1,278 @@
+{{define "pg-app"}}
+<div x-data="lgPlayground()" class="flex flex-col" hx-boost="false">
+  <div class="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+    {{template "page-header" dict "Title" "Playground" "Sub" "Chat with your models through the gateway — every request is routed, logged and billed." "Icon" "message-square-text"}}
+    <div class="flex flex-wrap items-center gap-2">
+      {{if and .Chat .Embedding}}
+      <div role="tablist" class="tabs tabs-box tabs-sm">
+        <button type="button" role="tab" class="tab gap-1.5" :class="tab==='chat' && 'tab-active'" @click="tab='chat'">{{icon "message-square-text"}} Chat</button>
+        <button type="button" role="tab" class="tab gap-1.5" :class="tab==='embeddings' && 'tab-active'" @click="tab='embeddings'">{{icon "binary"}} Embeddings</button>
+      </div>
+      {{end}}
+    </div>
+  </div>
+
+  {{if .Chat}}
+  {{/* ================= Chat ================= */}}
+  <div x-show="tab==='chat'" class="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
+    <section class="glass-card flex h-[calc(100vh-12.5rem)] min-h-[30rem] flex-col overflow-hidden">
+      <div class="flex items-center gap-2 border-b border-base-300/70 px-4 py-2.5">
+        <label class="select select-sm select-ghost max-w-[16rem] font-mono font-semibold">
+          <select x-model="model" aria-label="Model">
+            {{range .Chat}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+          </select>
+        </label>
+        <template x-if="current">
+          <div class="hidden items-center gap-2 text-[11px] opacity-60 sm:flex">
+            <span class="badge badge-ghost badge-sm" x-text="current.healthy + '/' + current.replicas + ' healthy'"></span>
+            <span x-show="current.context_window" x-text="(current.context_window/1000).toFixed(0) + 'k ctx'"></span>
+            <span x-text="'$' + current.input_cost_per_m + ' / $' + current.output_cost_per_m + ' per 1M'"></span>
+          </div>
+        </template>
+        <div class="ml-auto flex items-center gap-1">
+          <button type="button" class="btn btn-ghost btn-sm gap-1.5" @click="openCode()" title="View code">{{icon "code-xml"}}<span class="hidden md:inline">Code</span></button>
+          <button type="button" class="btn btn-ghost btn-sm gap-1.5" @click="reset()" :disabled="!messages.length" title="New chat">{{icon "eraser"}}<span class="hidden md:inline">New chat</span></button>
+          <button type="button" class="btn btn-ghost btn-sm btn-square lg:hidden" @click="showSettings = !showSettings" aria-label="Settings">{{icon "sliders-horizontal"}}</button>
+        </div>
+      </div>
+
+      <div x-ref="scroller" class="flex-1 overflow-y-auto scroll-smooth px-4 py-6 sm:px-6">
+        {{/* Empty state */}}
+        <div x-show="!messages.length" class="mx-auto flex min-h-full max-w-xl flex-col items-center justify-center gap-6 text-center">
+          <div class="relative">
+            <div class="absolute inset-0 rounded-full bg-primary/40 blur-2xl"></div>
+            <img src="/static/img/logo.svg" alt="" class="relative size-16 drop-shadow-lg">
+          </div>
+          <div>
+            <h2 class="text-xl font-semibold">What can I help with?</h2>
+            <p class="mt-1 text-sm opacity-60">Talking to <span class="font-mono font-semibold" x-text="model"></span>. Press Enter to send, Shift+Enter for a new line.</p>
+          </div>
+          <div class="grid w-full grid-cols-1 gap-2 sm:grid-cols-2">
+            {{range list "Explain what an AI gateway does in three bullet points." "Write a Python function that checks whether a string is a palindrome." "Summarize the benefits of self-hosting LLMs for a CTO." "Give me five creative names for a lemonade stand."}}
+            <button type="button" class="rounded-box border border-base-300 bg-base-100/70 p-3 text-left text-sm transition hover:-translate-y-0.5 hover:border-primary/60 hover:shadow-md" data-q="{{.}}" @click="suggest($el.dataset.q)">
+              <span class="line-clamp-2">{{.}}</span>
+            </button>
+            {{end}}
+          </div>
+        </div>
+
+        {{/* Messages */}}
+        <div class="mx-auto flex max-w-3xl flex-col gap-5">
+          <template x-for="(m, i) in messages" :key="i">
+            <div>
+              <template x-if="m.role === 'user'">
+                <div class="flex justify-end">
+                  <div class="brand-gradient max-w-[85%] whitespace-pre-wrap break-words rounded-box rounded-br-md px-4 py-2.5 text-sm text-primary-content shadow-sm" x-text="m.content"></div>
+                </div>
+              </template>
+              <template x-if="m.role === 'assistant'">
+                <div class="group flex gap-3">
+                  <div class="flex size-8 shrink-0 items-center justify-center rounded-xl border border-base-300 bg-base-100 shadow-sm">{{icon "citrus" "text-primary"}}</div>
+                  <div class="min-w-0 flex-1">
+                    <template x-if="m.reasoning">
+                      <details class="mb-2 rounded-field border border-base-300/70 bg-base-200/40 px-3 py-2 text-xs">
+                        <summary class="cursor-pointer select-none opacity-60">Reasoning</summary>
+                        <div class="mt-2 whitespace-pre-wrap opacity-70" x-text="m.reasoning"></div>
+                      </details>
+                    </template>
+                    <template x-if="m.error">
+                      <div role="alert" class="alert alert-error alert-soft items-start py-2.5 text-sm">{{icon "circle-alert"}}<span class="break-words" x-text="m.error"></span></div>
+                    </template>
+                    <div x-show="m.content || m.pending" class="chat-md prose-sm max-w-none break-words text-sm leading-relaxed [&_p]:my-1.5">
+                      <div x-html="md(m.content)"></div>
+                      <span x-show="m.pending" class="ml-0.5 inline-block h-4 w-1.5 translate-y-0.5 animate-pulse rounded-sm bg-primary"></span>
+                    </div>
+                    <div class="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] opacity-60">
+                      <template x-if="m.stopped"><span class="badge badge-warning badge-soft badge-xs">stopped</span></template>
+                      <template x-if="m.finish === 'length'"><span class="badge badge-warning badge-soft badge-xs" title="Increase max tokens">truncated</span></template>
+                      <template x-if="m.meta && m.meta.total != null"><span class="flex items-center gap-1">{{icon "coins"}}<span x-text="n(m.meta.prompt) + ' → ' + n(m.meta.completion) + ' tok'"></span></span></template>
+                      <template x-if="m.meta && m.meta.latency != null"><span class="flex items-center gap-1">{{icon "timer"}}<span x-text="n(m.meta.latency) + ' ms' + (m.meta.ttft != null ? ' · TTFT ' + n(m.meta.ttft) + ' ms' : '')"></span></span></template>
+                      <template x-if="m.meta && m.meta.tps"><span class="flex items-center gap-1">{{icon "zap"}}<span x-text="m.meta.tps.toFixed(1) + ' tok/s'"></span></span></template>
+                      <template x-if="m.meta && m.meta.cost != null"><span class="flex items-center gap-1">{{icon "wallet"}}<span x-text="money(m.meta.cost)"></span></span></template>
+                      <template x-if="m.meta && m.meta.cache === 'hit'"><span class="badge badge-info badge-soft badge-xs">cache hit</span></template>
+                      <span class="ml-auto flex gap-0.5 opacity-0 transition group-hover:opacity-100" x-show="!m.pending">
+                        <button type="button" class="btn btn-ghost btn-xs btn-square" title="Copy" @click="copyMsg(m)" x-show="m.content">{{icon "copy"}}</button>
+                        <button type="button" class="btn btn-ghost btn-xs btn-square" title="Retry" @click="retry(i)" x-show="i === messages.length - 1">{{icon "rotate-ccw"}}</button>
+                        <template x-if="m.meta && m.meta.requestId"><a class="btn btn-ghost btn-xs btn-square" title="Find in request logs" :href="'/ui/logs?window=24h&q=' + encodeURIComponent(m.meta.requestId)">{{icon "scroll-text"}}</a></template>
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <form class="border-t border-base-300/70 bg-base-100/60 p-3 sm:p-4" @submit.prevent="send()">
+        <div class="mx-auto flex max-w-3xl items-end gap-2 rounded-box border border-base-300 bg-base-100 p-2 shadow-sm transition focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/30">
+          <textarea id="pg-input" x-model="input" @keydown="onKey($event)" rows="1" placeholder="Send a message…"
+            class="max-h-48 min-h-10 flex-1 resize-none bg-transparent px-2 py-2 text-sm outline-none [field-sizing:content]"></textarea>
+          <button type="submit" class="btn btn-primary btn-square" x-show="!busy" :disabled="!input.trim() || !model" aria-label="Send">{{icon "arrow-up" "text-lg"}}</button>
+          <button type="button" class="btn btn-neutral btn-square" x-show="busy" x-cloak @click="stop()" aria-label="Stop">{{icon "square" "text-sm"}}</button>
+        </div>
+        <p class="mx-auto mt-2 max-w-3xl text-center text-[11px] opacity-40">Requests run as you and count toward your budget. Responses may be inaccurate.</p>
+      </form>
+    </section>
+
+    {{/* Settings */}}
+    <aside class="flex-col gap-4 lg:flex" :class="showSettings ? 'flex' : 'hidden'">
+      <div class="glass-card flex flex-col gap-4 p-5">
+        <div class="flex items-center gap-2 text-sm font-semibold">{{icon "sliders-horizontal" "opacity-60"}} Parameters</div>
+        <fieldset class="fieldset py-0">
+          <legend class="fieldset-legend">System prompt</legend>
+          <textarea x-model="system" rows="4" class="textarea w-full text-sm" placeholder="You are a helpful assistant."></textarea>
+        </fieldset>
+        <fieldset class="fieldset py-0">
+          <legend class="fieldset-legend flex w-full justify-between">Temperature <span class="font-mono font-normal opacity-70" x-text="Number(temperature).toFixed(2)"></span></legend>
+          <input type="range" min="0" max="2" step="0.05" x-model="temperature" class="range range-primary range-xs w-full">
+        </fieldset>
+        <fieldset class="fieldset py-0">
+          <legend class="fieldset-legend flex w-full justify-between">Top P <span class="font-mono font-normal opacity-70" x-text="Number(topP).toFixed(2)"></span></legend>
+          <input type="range" min="0" max="1" step="0.01" x-model="topP" class="range range-secondary range-xs w-full">
+        </fieldset>
+        <fieldset class="fieldset py-0">
+          <legend class="fieldset-legend">Max tokens</legend>
+          <input type="number" min="1" :max="current && current.max_output ? current.max_output : null" x-model="maxTokens" class="input input-sm w-full">
+          <p class="label text-xs" x-show="current && current.max_output" x-text="'Model limit ' + (current ? n(current.max_output) : '')"></p>
+        </fieldset>
+        <label class="flex cursor-pointer items-center justify-between gap-2">
+          <span class="text-sm">Stream response</span>
+          <input type="checkbox" x-model="stream" class="toggle toggle-primary toggle-sm">
+        </label>
+      </div>
+
+      <div class="glass-card flex flex-col gap-3 p-5">
+        <div class="flex items-center gap-2 text-sm font-semibold">{{icon "gauge" "opacity-60"}} Last response</div>
+        <template x-if="!last"><p class="text-xs opacity-60">Token usage, latency and cost of your latest reply appear here.</p></template>
+        <template x-if="last">
+          <div class="flex flex-col gap-3">
+            <div class="grid grid-cols-2 gap-2">
+              <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Prompt</div><div class="text-sm font-semibold tabular-nums" x-text="n(last.prompt)"></div></div>
+              <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Completion</div><div class="text-sm font-semibold tabular-nums" x-text="n(last.completion)"></div></div>
+              <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">Latency</div><div class="text-sm font-semibold tabular-nums" x-text="n(last.latency) + ' ms'"></div></div>
+              <div class="rounded-field bg-base-200/60 px-3 py-2"><div class="text-[10px] font-semibold uppercase tracking-wider opacity-50">TTFT</div><div class="text-sm font-semibold tabular-nums" x-text="last.ttft != null ? n(last.ttft) + ' ms' : '—'"></div></div>
+            </div>
+            <div class="flex items-center justify-between rounded-field border border-primary/40 bg-primary/10 px-3 py-2">
+              <span class="text-xs font-semibold uppercase tracking-wider opacity-60">Cost</span>
+              <span class="font-semibold tabular-nums" x-text="money(last.cost)"></span>
+            </div>
+            <dl class="flex flex-col gap-1 text-[11px]">
+              <div class="flex justify-between gap-2"><dt class="opacity-50">Served by</dt><dd class="truncate font-mono" x-text="last.model"></dd></div>
+              <div class="flex justify-between gap-2" x-show="last.requestId"><dt class="opacity-50">Request</dt><dd class="truncate font-mono"><a class="link" :href="'/ui/logs?window=24h&q=' + encodeURIComponent(last.requestId)" x-text="last.requestId.slice(0, 18)"></a></dd></div>
+            </dl>
+          </div>
+        </template>
+      </div>
+    </aside>
+  </div>
+
+  {{/* Code dialog */}}
+  <dialog x-ref="codeDlg" class="modal modal-bottom sm:modal-middle">
+    <div class="modal-box w-full max-w-3xl border border-base-300 p-0 shadow-2xl">
+      <div class="flex items-start gap-4 border-b border-base-300 px-6 py-5">
+        <div class="brand-gradient flex size-10 shrink-0 items-center justify-center rounded-xl text-primary-content">{{icon "code-xml" "text-xl"}}</div>
+        <div class="flex-1">
+          <h3 class="text-lg font-semibold">Use this conversation in code</h3>
+          <p class="text-sm opacity-60">Same model, messages and parameters, against <code class="mono">{{.BaseURL}}</code></p>
+        </div>
+        <form method="dialog"><button class="btn btn-ghost btn-sm btn-square" aria-label="Close">{{icon "x"}}</button></form>
+      </div>
+      <div class="flex flex-col gap-3 px-6 py-5">
+        <div role="tablist" class="tabs tabs-box tabs-sm w-fit">
+          <button type="button" role="tab" class="tab" :class="codeTab==='curl' && 'tab-active'" @click="codeTab='curl'">curl</button>
+          <button type="button" role="tab" class="tab" :class="codeTab==='python' && 'tab-active'" @click="codeTab='python'">Python</button>
+          <button type="button" role="tab" class="tab" :class="codeTab==='js' && 'tab-active'" @click="codeTab='js'">JavaScript</button>
+        </div>
+        <div class="relative">
+          <button type="button" class="btn btn-xs absolute right-2 top-2 z-10 gap-1 border-base-content/10 bg-base-100/10 text-neutral-content backdrop-blur hover:bg-base-100/20" @click="lgCopy(snippet)">{{icon "copy"}} Copy</button>
+          <pre class="max-h-[55vh] overflow-auto rounded-box bg-neutral p-4 pr-20 font-mono text-xs leading-relaxed text-neutral-content" x-text="snippet"></pre>
+        </div>
+        <p class="text-xs opacity-60">Set <code class="mono">LEMONGATE_API_KEY</code> to a key from the <a href="/ui/keys" class="link">API keys</a> page.<template x-if="codeTab==='python'"><span> Requires <code class="mono">pip install openai</code>.</span></template><template x-if="codeTab==='js'"><span> Requires <code class="mono">npm install openai</code>.</span></template></p>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>close</button></form>
+  </dialog>
+  {{end}}
+
+  {{if .Embedding}}
+  {{/* ================= Embeddings ================= */}}
+  <div x-show="tab==='embeddings'" {{if .Chat}}x-cloak{{end}} class="grid grid-cols-1 gap-6 lg:grid-cols-[22rem_minmax(0,1fr)]">
+    <form class="glass-card flex flex-col gap-4 p-5" @submit.prevent="embed()">
+      <div class="flex items-center gap-2 text-sm font-semibold">{{icon "binary" "opacity-60"}} Embedding request</div>
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend">Model</legend>
+        <select x-model="embModel" class="select w-full font-mono">
+          {{range .Embedding}}<option value="{{.Name}}">{{.Name}}</option>{{end}}
+        </select>
+        <p class="label text-xs" x-show="currentEmb" x-text="currentEmb ? ('$' + currentEmb.input_cost_per_m + ' per 1M input tokens') : ''"></p>
+      </fieldset>
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend">Input</legend>
+        <textarea x-model="embInput" rows="7" class="textarea w-full text-sm" placeholder="Text to embed"></textarea>
+      </fieldset>
+      <label class="flex cursor-pointer items-center justify-between gap-2">
+        <span class="text-sm">One input per line <span class="block text-[11px] opacity-50">Compares each line to the first (cosine similarity)</span></span>
+        <input type="checkbox" x-model="embSplit" class="toggle toggle-primary toggle-sm">
+      </label>
+      <button type="submit" class="btn btn-primary gap-2" :disabled="embBusy || !embInput.trim()">
+        <span class="loading loading-spinner loading-sm" x-show="embBusy" x-cloak></span>
+        <span x-show="!embBusy">{{icon "sparkles"}}</span> Create embedding
+      </button>
+    </form>
+
+    <section class="flex flex-col gap-4">
+      <template x-if="embError">
+        <div role="alert" class="alert alert-error alert-soft text-sm">{{icon "circle-alert"}}<span x-text="embError"></span></div>
+      </template>
+      <template x-if="!embResult && !embError">
+        <div class="glass-card">{{template "empty" dict "Icon" "binary" "Title" "Vectors appear here" "Body" "Send some text to see the embedding's dimensions, leading values and similarity between inputs."}}</div>
+      </template>
+      <template x-if="embResult">
+        <div class="flex flex-col gap-4">
+          <div class="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div class="stat-tile"><span class="label">Dimensions</span><span class="value" x-text="embResult.vectors.length ? n(embResult.vectors[0].dims) : '—'"></span></div>
+            <div class="stat-tile"><span class="label">Vectors</span><span class="value" x-text="embResult.vectors.length"></span></div>
+            <div class="stat-tile"><span class="label">Tokens</span><span class="value" x-text="n(embResult.tokens)"></span></div>
+            <div class="stat-tile"><span class="label">Latency</span><span class="value" x-text="n(embResult.latency) + ' ms'"></span><span class="text-xs opacity-60" x-text="money(embResult.cost)"></span></div>
+          </div>
+          <template x-if="embResult.sims.length">
+            <div class="glass-card p-5">
+              <div class="mb-3 text-sm font-semibold">Similarity to the first input</div>
+              <ul class="flex flex-col gap-3">
+                <template x-for="s in embResult.sims">
+                  <li>
+                    <div class="flex justify-between gap-3 text-sm"><span class="truncate" x-text="s.input"></span><span class="font-mono tabular-nums" x-text="s.sim.toFixed(4)"></span></div>
+                    <progress class="progress progress-primary h-1.5 w-full" :value="Math.max(0, s.sim)" max="1"></progress>
+                  </li>
+                </template>
+              </ul>
+            </div>
+          </template>
+          <template x-for="(v, i) in embResult.vectors" :key="i">
+            <div class="glass-card p-5">
+              <div class="mb-3 flex items-start justify-between gap-3">
+                <p class="line-clamp-2 text-sm font-medium" x-text="v.input"></p>
+                <span class="badge badge-ghost badge-sm shrink-0 font-mono" x-text="'‖v‖ ' + v.norm.toFixed(3)"></span>
+              </div>
+              <div class="flex h-16 items-stretch gap-px rounded-field bg-base-200/50 px-1" aria-hidden="true">
+                <template x-for="b in v.bars">
+                  <div class="relative flex-1">
+                    <div class="absolute inset-x-0 rounded-sm" :class="b.neg ? 'bg-secondary' : 'bg-primary'" :style="(b.neg ? 'top:50%;' : 'bottom:50%;') + 'height:' + (b.h / 2) + '%'"></div>
+                  </div>
+                </template>
+              </div>
+              <p class="mt-1 text-[11px] opacity-50" x-text="'First ' + v.bars.length + ' dimensions (yellow positive, green negative)'"></p>
+              <div class="mt-3 flex flex-wrap gap-1.5">
+                <template x-for="x in v.head"><code class="rounded bg-base-200 px-1.5 py-0.5 font-mono text-[11px]" x-text="x"></code></template>
+                <span class="text-[11px] opacity-50" x-show="v.dims > v.head.length" x-text="'… ' + n(v.dims - v.head.length) + ' more'"></span>
+              </div>
+            </div>
+          </template>
+        </div>
+      </template>
+    </section>
+  </div>
+  {{end}}
+</div>
+{{end}}
